@@ -243,10 +243,17 @@ class AndroidSecurityPolicy:
     def get_saved_file_path(self, name):
         path = self.policy_files[name]["save_path"]
 
-        # drop the leading three path components
-        # from: policy/VENDOR/FIRMWARE/init/system/etc/init/mediaserver.rc
+        # find firmware image name in the saved path for the policy (this can change due to policy path)
+        common_path_component_idx = path.split(os.sep).index(self.firmware_name)
+
+        if common_path_component_idx == -1:
+            raise ValueError("Unable to determine saved policy file path (did you move or rename policy directory)?")
+
+        # drop the leading N+1 path components
+        # example: N = 2, Drop 0, 1, 2
+        # from: POLICY_DIR/VENDOR/FIRMWARE/init/system/etc/init/mediaserver.rc
         # to: init/system/etc/init/mediaserver.rc
-        return os.path.join(self.get_results_dir(), "/".join(path.split(os.sep)[3:]))
+        return os.path.join(self.get_results_dir(), "/".join(path.split(os.sep)[common_path_component_idx+1:]))
 
     def get_android_version(self):
         android_version = list(map(int, self.get_properties()['properties']['android_version'].split('.')))
@@ -262,14 +269,15 @@ class AndroidSecurityPolicy:
         props = self.properties
         android_version = props['ro.build.version.release']
         build_id = props['ro.build.id']
-        brand =  props['ro.product.brand']
+        brand = props.get_multi_default(
+                ['ro.product.brand', 'ro.product.system.brand'], default="UNKNOWN")
 
         # Some samsung/lineage prop files don't have a model listed...
         model = props.get_multi_default(
-                ['ro.product.model', 'ro.product.base_model'], default="UNKNOWN")
+                ['ro.product.model', 'ro.product.base_model', 'ro.product.system.brand'], default="UNKNOWN")
 
-        product_name = props.get_multi_default(['ro.product.name'], default="UNKNOWN")
-        product_device = props.get_multi_default(['ro.product.device'],
+        product_name = props.get_multi_default(['ro.product.name', 'ro.product.system.name'], default="UNKNOWN")
+        product_device = props.get_multi_default(['ro.product.device', 'ro.product.system.device'],
                                                  default="UNKNOWN")
 
         interesting_properties = {

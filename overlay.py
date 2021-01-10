@@ -197,7 +197,11 @@ class ProcessNode(GraphNode):
 
     def __repr__(self):
         parent_type = self.parent.subject.sid.type if self.parent else "god"
-        return "<ProcessNode %s->%s %s %s>" % (parent_type, self.subject.sid.type, list(self.exe.keys())[0], self.cred)
+
+        if self.state == ProcessState.RUNNING:
+            return "<ProcessNode %s->%s %s %s RUNNING pid=%d>" % (parent_type, self.subject.sid.type, list(self.exe.keys())[0], self.cred, self.pid)
+        else:
+            return "<ProcessNode %s->%s %s %s>" % (parent_type, self.subject.sid.type, list(self.exe.keys())[0], self.cred)
 
     def __eq__(self, other):
         return isinstance(other, ProcessNode) and hash(self) == hash(other)
@@ -591,6 +595,14 @@ class SEPolicyInst(object):
                 for fn, f in zygote_files.items():
                     s.associate_file({fn:f})
 
+        # Special case for system_server which can be transitioned to from system_server_startup
+        # https://android.googlesource.com/platform/system/sepolicy/+blame/master/private/system_server_startup.te
+        # Mirror backing files from system_server_startup to system_server (if any)
+        if "system_server_startup" in self.subjects:
+            ss = self.subjects["system_server"]
+            for fn, f in self.subjects["system_server_startup"].backing_files.items():
+                ss.associate_file({fn:f})
+
         ##  4. Final chance for file recovery (heuristic)
         no_backing_file_transitions = set(list(self.subjects)) - has_backing_file_transition
 
@@ -608,7 +620,7 @@ class SEPolicyInst(object):
 
             if len(found_files) == 1:
                 (fn, fobj), = found_files[0].items()
-                log.info("Last ditch file mapping recovery for %s found '%s'", domain, fn)
+                log.warning("Last ditch file mapping recovery for %s found '%s' (this may be incorrect and cause further analysis to fail)", domain, fn)
                 self.subjects[domain].associate_file(found_files[0])
 
     def extract_selinux_capabilities(self):
@@ -649,8 +661,8 @@ class SEPolicyInst(object):
         # Technically the kernel can have a ton of processes, but we only consider one in our graph
         self.processes["kernel_0"] = ProcessNode(kernel_subject, None, {'/kernel' : {}}, 0)
 
-        # (parent, child)
-        stack = [(self.processes["kernel_0"], init_subject)]
+        # (parent_process, parent_exe, child_subject)
+        stack = [(self.processes["kernel_0"], "/kernel", init_subject)]
 
         ### Propagate subject permissions by simulating fork/exec
         # Depth-first traversal
@@ -658,22 +670,49 @@ class SEPolicyInst(object):
         pid = 1
 
         while len(stack):
-            parent_process, child_subject = stack.pop()
-            visited |= set([child_subject])
+            parent_process, parent_exe, child_subject = stack.pop()
+            # only visit an edge on the subject graph once
+            visited |= set([(parent_process.subject, parent_exe, child_subject)])
 
             # No backing files? Go away
             if len(child_subject.backing_files) == 0:
                 continue
 
+            # Resolve symbolic links (should this be done earlier)?
+            backing_files_resolved = {}
+
             for fn, f in sorted(child_subject.backing_files.items()):
+                link_path = f["link_path"]
+                if link_path != '':
+                    resolved = self.filesystem.realpath(link_path)
+                    if resolved in self.filesystem.files:
+                        target = self.filesystem.files[resolved]
+                        backing_files_resolved.update({ link_path : target })
+                else:
+                    backing_files_resolved.update({ fn : f })
+
+            for fn, f in sorted(backing_files_resolved.items()):
                 fc = f["selinux"]
-                exec_rule_parent = None
-                exec_rule_child = None
+                exec_rule_parent = False
+                exec_rule_child = False
+                dyntransition = False
+                transition = False
 
                 if fc.type in G[parent_process.subject.sid.type]:
                     exec_rule_parent = "execute_no_trans" in G[parent_process.subject.sid.type][fc.type][0]
                 if fc.type in G[child_subject.sid.type]:
                     exec_rule_child = "execute_no_trans" in G[child_subject.sid.type][fc.type][0]["perms"]
+                if child_subject.sid.type in G[parent_process.subject.sid.type]:
+                    parent_child_edge = G[parent_process.subject.sid.type][child_subject.sid.type][0]["perms"]
+                    dyntransition = "dyntransition" in parent_child_edge
+                    transition = "transition" in parent_child_edge
+
+                # if only dyntransitions, child exe doesn't change, so make sure child processes respect that
+                if dyntransition and not transition:
+                    (fn_parent, _), = parent_process.exe.items()
+
+                    if fn_parent != fn:
+                        continue
 
                 # Conservatively assume the parent
                 new_process = ProcessNode(child_subject, parent_process, {fn : f}, pid)
@@ -686,8 +725,15 @@ class SEPolicyInst(object):
                 pid += 1
 
                 for child in sorted(child_subject.children, key=lambda x: str(x.sid.type)):
-                    if child not in visited or (child.sid.type == "crash_dump" and child_subject.sid.type in ["zygote"]):
-                        stack += [(new_process, child)]
+                    edge = (new_process, fn, child)
+                    edge_query = (new_process.subject, fn, child)
+
+                    cycle = new_process.subject == child
+
+                    # TODO: refactor special casing to networkx.algorithms.traversal.edgedfs.edge_dfs
+                    # We are _trying_ to avoid cycles while visiting every edge. This needs more work
+                    if edge_query not in visited or (child.sid.type == "crash_dump" and not cycle) or child.sid.type.startswith("system_server"):
+                        stack += [edge]
 
     def simulate_process_permissions(self):
         # Special cases for android
@@ -806,13 +852,22 @@ class SEPolicyInst(object):
             return False
 
         zygotes = sorted(list(filter(lambda x: "zygote" in x.subject.sid.type, init.children)), key=lambda x: x.pid)
+        system_server_startup = list(filter(lambda x: x.subject.sid.type == "system_server_startup", system_server_parent.children))
+
+        if len(zygotes) ==  0:
+            log.error("No zygotes! This is bad")
+            return False
+
+        if system_server_parent not in zygotes:
+            log.error("system_server parent zygote is not in zygote list!")
+            return False
 
         # remove children from all zygotes with differing executables
         for zyg in zygotes:
             (z_fn, _), = zyg.exe.items()
 
             if system_server_parent != zyg:
-                zyg.children = set(filter(lambda x: x.subject.sid.type != "system_server", zyg.children))
+                zyg.children = set(filter(lambda x: not x.subject.sid.type.startswith("system_server"), zyg.children))
                 log.info("Dropping system_server from %s", zyg)
 
             for child in list(zyg.children):
@@ -821,37 +876,13 @@ class SEPolicyInst(object):
                 if fn != z_fn and "crash" not in fn:
                     zyg.children -= set([child])
 
-        # spawn an untrusted app
-        if len(zygotes) > 0:
-            app_parent = zygotes[0]
-            untrusted_apps = list(filter(lambda x: "untrusted_app" in x.subject.sid.type, app_parent.children))
-            crash_dump = list(filter(lambda x: "crash_dump" in x.subject.sid.type, app_parent.children))
-            app_id = 0
-
-            for crashes in sorted(crash_dump, key=lambda x: x.subject.sid.type):
-                crashes.cred = app_parent.cred.execve(new_sid=crashes.subject.sid)
-                crashes.state = ProcessState.RUNNING
-                log.info("Spawned crash_dump %s from %s", repr(crashes), repr(app_parent))
-
-            for primary_app in sorted(untrusted_apps, key=lambda x: x.subject.sid.type):
-                primary_app.cred = app_parent.cred.execve(new_sid=primary_app.subject.sid)
-                # Drop any supplemental groups from init
-                primary_app.cred.clear_groups()
-                primary_app.cred.cap.drop_all()
-
-                primary_app.cred.uid = 10000+app_id
-                primary_app.cred.gid = 10000+app_id
-                primary_app.cred.add_group('inet')
-                primary_app.cred.add_group('everybody')
-                primary_app.cred.add_group(50000+app_id)
-                primary_app.state = ProcessState.RUNNING
-                log.info("Spawned untrusted_app %s from %s", repr(primary_app), repr(app_parent))
-                app_id += 1
+        if len(system_server_startup) > 0:
+            # The parent won't match as the graph looks like zygote -> system_server_startup -> system_server
+            # system_server_startup is a temporary state and can be ignored
+            system_server = list(filter(lambda x: x.subject.sid.type == "system_server", system_server_startup[0].children))
+            log.info("system_server_startup detected, inferring system_server from this label instead of zygote directly");
         else:
-            log.error("No zygotes! This is bad")
-            return False
-
-        system_server = list(filter(lambda x: x.subject.sid.type == "system_server", system_server_parent.children))
+            system_server = list(filter(lambda x: x.subject.sid.type == "system_server", system_server_parent.children))
 
         if len(system_server) == 0:
             log.error("Issue spawning system_server")
@@ -877,6 +908,34 @@ class SEPolicyInst(object):
             system_server.cred.add_group(group)
 
         system_server.state = ProcessState.RUNNING
+
+        ## spawn extra applications
+
+        # spawn an untrusted app
+        app_parent = system_server_parent
+        untrusted_apps = list(filter(lambda x: "untrusted_app" in x.subject.sid.type, app_parent.children))
+        crash_dump = list(filter(lambda x: "crash_dump" in x.subject.sid.type, app_parent.children))
+        app_id = 0
+
+        for crashes in sorted(crash_dump, key=lambda x: x.subject.sid.type):
+            crashes.cred = app_parent.cred.execve(new_sid=crashes.subject.sid)
+            crashes.state = ProcessState.RUNNING
+            log.info("Spawned crash_dump %s from %s", repr(crashes), repr(app_parent))
+
+        for primary_app in sorted(untrusted_apps, key=lambda x: x.subject.sid.type):
+            primary_app.cred = app_parent.cred.execve(new_sid=primary_app.subject.sid)
+            # Drop any supplemental groups from init
+            primary_app.cred.clear_groups()
+            primary_app.cred.cap.drop_all()
+
+            primary_app.cred.uid = 10000+app_id
+            primary_app.cred.gid = 10000+app_id
+            primary_app.cred.add_group('inet')
+            primary_app.cred.add_group('everybody')
+            primary_app.cred.add_group(50000+app_id)
+            primary_app.state = ProcessState.RUNNING
+            log.info("Spawned untrusted_app %s from %s", repr(primary_app), repr(app_parent))
+            app_id += 1
 
         return True
 
