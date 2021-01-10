@@ -69,6 +69,7 @@ class Prolog(object):
                 {'name' : 'list_saved', 'handler': self.list_saved},
                 {'name' : 'load', 'handler': self.load},
                 {'name' : 'debug', 'handler': self.debug},
+                {'name' : 'save_print', 'handler': self.save_txt}
         ]
 
     def print_strongest(self, args):
@@ -245,12 +246,13 @@ class Prolog(object):
             except ValueError:
                 return
 
-        for pathid, path in enumerate(sorted(self.result)):
-            if cutoff is not None and (pathid+1 > cutoff):
-                break
+        self._pretty_print_results(cutoff=cutoff)
+        # for pathid, path in enumerate(sorted(self.result)):
+        #     if cutoff is not None and (pathid+1 > cutoff):
+        #         break
 
-            pretty_path = self._render_path(path)
-            print("%d: %s" % (pathid+1, pretty_path))
+        #     pretty_path = self._render_path(path)
+        #     print("%d: %s" % (pathid+1, pretty_path))
 
     def _render_path(self, path, colorized=False):
         renamed = []
@@ -281,12 +283,13 @@ class Prolog(object):
             except ValueError:
                 return
 
-        for pathid, path in enumerate(sorted(self.result)):
-            if cutoff is not None and (pathid+1 > cutoff):
-                break
+        self._pretty_print_results(cutoff=cutoff, colorized=True)
+        # for pathid, path in enumerate(sorted(self.result)):
+        #     if cutoff is not None and (pathid+1 > cutoff):
+        #         break
 
-            pretty_path = self._render_path(path, colorized=True)
-            print("%d: %s" % (pathid+1, pretty_path))
+        #     pretty_path = self._render_path(path, colorized=True)
+        #     print("%d: %s" % (pathid+1, pretty_path))
 
     def sort_special_files(self):
         if not self.special_files:
@@ -332,6 +335,49 @@ class Prolog(object):
             log.info("Saved %d results to %s", len(self.result), path)
         except IOError as e:
             log.error("Failed to save file: %s", e)
+
+    def save_txt(self, args):
+        if len(args) < 1:
+            log.error("Save needs filename")
+            return
+        
+        cutoff = None
+        if len(args) >= 2:
+            try:
+                cutoff = int(args[1])
+            except ValueError:
+                log.error("cutoff argument must be an integer")
+                return
+
+        if not self.result:
+            log.error("No results to save")
+            return
+
+        try:
+            os.mkdir(self.saved_queries_path)
+        except IOError:
+            pass
+            
+        save_path = os.path.join(self.saved_queries_path, args[0])
+        try:
+            with open(save_path, 'w') as fp:
+                n = self._pretty_print_results(cutoff=cutoff, file=fp)
+
+            log.info("Saved %d results to %s", n, save_path)
+        except IOError as e:
+            log.error("Failed to save file: %s", e)
+
+    def _pretty_print_results(self, cutoff=None, colorized=False, file=sys.stdout):
+        n_lines_printed = 0
+        for pathid, path in enumerate(sorted(self.result)):
+            if cutoff is not None and (pathid+1 > cutoff):
+                break
+
+            pretty_path = self._render_path(path, colorized=colorized)
+            print("%d: %s" % (pathid+1, pretty_path), file=file)
+            n_lines_printed += 1
+
+        return n_lines_printed
 
     def diff(self, args):
         import difflib
