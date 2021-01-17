@@ -69,8 +69,68 @@ class Prolog(object):
                 {'name' : 'list_saved', 'handler': self.list_saved},
                 {'name' : 'load', 'handler': self.load},
                 {'name' : 'debug', 'handler': self.debug},
-                {'name' : 'save_print', 'handler': self.save_txt}
+                {'name' : 'save_print', 'handler': self.save_txt},
+                {'name' : 'query_attack_surface', 'handler': self.query_attack_surface}
         ]
+
+    def query_attack_surface(self, args):
+        target = args[0]
+
+        self.result = []
+        self.query(["_", target, "1"])
+        result_1 = self.result.copy()
+
+        self.result = []
+        self.query(["_", target, "2"])
+        result_2 = self.result.copy()
+
+        diff_result = self._diff(result_1, result_2, "right", return_rendered=False)
+        self.result = diff_result
+
+        uniq_procs = set()
+        uniq_ipc = set()
+        uniq_types = set()
+        uniq_files = set()
+        uniq_obj = set()
+
+        for path in diff_result:
+            writeable_obj_id = path[1]
+            writing_obj_id = path[0]
+
+            try:
+                writeable_obj = self.node_objs[self.node_id_map_inv[writeable_obj_id]]
+
+                uniq_obj.add(writeable_obj_id)
+                uniq_types.add(writeable_obj.sid.type)
+
+                if isinstance(writeable_obj, overlay.IPCNode):
+                    uniq_ipc.add(writeable_obj_id)
+                elif isinstance(writeable_obj, overlay.FileNode):
+                    uniq_files.add(writeable_obj_id)
+
+            except KeyError as e:
+                log.error("Could not find writeable object %s" % e)
+
+
+            try:
+                writing_obj = self.node_objs[self.node_id_map_inv[writing_obj_id]]
+                if isinstance(writing_obj, overlay.ProcessNode): 
+                    uniq_procs.add(writing_obj_id)
+
+            except KeyError as e:
+                log.error("could not find writing object %s" % e)
+
+
+        result = {"ntype": len(uniq_types),
+                    "nobj": len(uniq_obj),
+                    "ipc": len(uniq_ipc),
+                    "file": len(uniq_files),
+                    "procs": len(uniq_procs),
+                }
+
+        result_str = " ".join("%s=%-5d " % (k, v) for k, v in result.items())
+        print("Got %d writeable paths: %s" % (len(diff_result), result_str))
+
 
     def print_strongest(self, args):
         results = {}
@@ -419,8 +479,31 @@ class Prolog(object):
 
         return n_lines_printed
 
+    def _diff(self, diff_a_paths, diff_b_paths, filter_param, return_rendered=True):
+        from difflib import Differ
+
+        result = []
+
+        d = Differ()
+
+        diff_a_paths = dict([((self._render_path(x) + "\n"), x) for x in diff_a_paths])
+        diff_b_paths = dict([((self._render_path(x) + "\n"), x) for x in diff_b_paths])
+
+        result = d.compare(list(diff_a_paths.keys()), list(diff_b_paths.keys()))
+
+        if filter_param == "left":
+            result = list(filter(lambda x: x.startswith('- '), result))
+        elif filter_param == "right":
+            result = list(filter(lambda x: x.startswith('+ '), result))
+        elif filter_param == "both":
+            result = list(filter(lambda x: x.startswith('  '), result))
+
+        if not return_rendered:
+            result = [diff_a_paths.get(r[2:], diff_b_paths[r[2:]]) for r in result]
+
+        return result
+
     def diff(self, args):
-        import difflib
 
         filter_param = ""
 
@@ -446,20 +529,8 @@ class Prolog(object):
             print("Left or right result has no paths")
             return
 
-        d = difflib.Differ()
-
-        diff_a_paths = [(self._render_path(x) + "\n") for x in diff_a_paths]
-        diff_b_paths = [(self._render_path(x) + "\n") for x in diff_b_paths]
-
         print("Diffing %s (%d) -> %s (%d) paths..." % (diff_a, len(diff_a_paths), diff_b, len(diff_b_paths)))
-        result = d.compare(diff_a_paths, diff_b_paths)
-
-        if filter_param == "left":
-            result = list(filter(lambda x: x.startswith('- '), result))
-        elif filter_param == "right":
-            result = list(filter(lambda x: x.startswith('+ '), result))
-        elif filter_param == "both":
-            result = list(filter(lambda x: x.startswith('  '), result))
+        result = self._diff(diff_a_paths, diff_b_paths, filter_param)
 
         for i, line in enumerate(result):
             sys.stdout.write("%d: %s" % (i+1, line))
