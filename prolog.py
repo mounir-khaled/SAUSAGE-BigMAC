@@ -75,26 +75,52 @@ class Prolog(object):
     def print_strongest(self, args):
         results = {}
         count = 0
+
+        sort_key = 1 # sort by nobj by default 
+        if args:
+            obj_type_str = args[0].lower().strip()
+
+            OBJ_TYPE_IX = {"type": 0, "obj": 1, "ipc": 2, "file": 3, "type_strength": 4}
+            if obj_type_str not in OBJ_TYPE_IX:
+                log.error("Invalid strength sort key '%s' Valid options are %s" % (obj_type_str, list(OBJ_TYPE_IX.keys())))
+                return
+
+            sort_key = OBJ_TYPE_IX[obj_type_str]
+
+        type_freq = {}
+        # frequency of occurence of an object type
+        # might be interesting to use this as an indicator of strength
+        # then sort objects by the combined strength of the types it has access to
+        # intuitively types with less objects that can access them are stronger...
+        intermediate_results = {}
         for pn, p in self.inst.processes.items():
             name = p.get_node_name()
             self.result = []
+            log.setLevel(logging.WARNING)
             self.query([name, "_", "1"])
+            log.setLevel(logging.INFO)
 
             if len(self.result) > 0:
-                uniq_types = {}
-                obj_types = {"ipc": 0, "file": 0}
+                uniq_types = set()
+                obj_types = {"ipc": [], "file": []}
 
                 for path in self.result:
                     target = path[1]
                     obj = self.node_objs[self.node_id_map_inv[target]]
-                    uniq_types[obj.sid.type] = 1
+                    if obj.sid.type not in uniq_types:
+                        uniq_types.add(obj.sid.type)
+                        
+                        type_freq[obj.sid.type] = type_freq.get(obj.sid.type, 0)
+                        if not (isinstance(obj, overlay.IPCNode) and obj.owner == p):
+                            type_freq[obj.sid.type] += 1
 
                     if isinstance(obj, overlay.IPCNode):
-                        obj_types["ipc"] += 1
-                    elif isinstance(obj, overlay.FileNode):
-                        obj_types["file"] += 1
+                        obj_types["ipc"].append(obj)
 
-                results[name] = [len(uniq_types), len(self.result), obj_types["ipc"],
+                    elif isinstance(obj, overlay.FileNode):
+                        obj_types["file"].append(obj)
+
+                intermediate_results[name] = [uniq_types, len(self.result), obj_types["ipc"],
                         obj_types["file"]]
 
             count += 1
@@ -102,11 +128,20 @@ class Prolog(object):
             if count % 10 == 0:
                 print("Progress %d/%d" % (count, len(self.inst.processes)))
 
-        results = sorted(list(results.items()), key=lambda x: x[1][1], reverse=True)
+        for node_name, res in intermediate_results.items():
+            uniq_types = res[0]
+            n_uniq_type = len(uniq_types)
+            n_obj = res[1]
+            n_ipc = len(res[2])
+            n_file = len(res[3])
+            type_strength = sum(1 / type_freq[t] for t in uniq_types if type_freq[t] != 0)
 
+            results[node_name] = [n_uniq_type, n_obj, n_ipc, n_file, type_strength]
+        
+        results = sorted(list(results.items()), key=lambda x: (x[1][sort_key], x[1][1]), reverse=True)
         for i, res in enumerate(results):
-            print("%3d: ntype=%-5d nobj=%-5d ipc=%-5d file=%-5d %s" % (i+1,
-                res[1][0], res[1][1], res[1][2], res[1][3], res[0]))
+            print("%3d: ntype=%-5d nobj=%-5d ipc=%-5d file=%-5d str=%-5.2f %s" % (i+1,
+                res[1][0], res[1][1], res[1][2], res[1][3], res[1][4], res[0]))
 
     def load_node_map(self):
         with open(self.inst_map_path, 'rb') as fp:
@@ -258,12 +293,17 @@ class Prolog(object):
         renamed = []
 
         for component in path:
-            name = self.node_id_map_inv[component]
-            obj = self.node_objs[name]
+            if component in self.node_id_map_inv:
+                name = self.node_id_map_inv[component]
+                obj = self.node_objs[name]
+            else:
+                log.error("Could not find component %s in node_id_map" % component)
+                name = component
+                obj = None
 
             if colorized:
                 # TODO: make the coloring be controlled by a lambda
-                if obj.trusted:
+                if obj and obj.trusted:
                     renamed += ["\x1b[32m%s (T)\x1b[0m" % name]
                 else:
                     renamed += ["\x1b[31m%s (U)\x1b[0m" % name]
