@@ -59,6 +59,7 @@ class Prolog(object):
                 {'name' : 'query', 'handler': self.query},
                 {'name' : 'query_mac', 'handler': self.query_mac_only},
                 {'name' : 'print', 'handler': self.print_paths},
+                {'name' : 'print_ipc', 'handler': self.print_ipc_paths},
                 {'name' : 'print_trust', 'handler': self.print_trust_paths},
                 {'name' : 'print_special', 'handler' : self.print_special},
                 {'name' : 'print_trusted', 'handler' : self.print_trusted},
@@ -97,10 +98,11 @@ class Prolog(object):
             writeable_obj_id = path[1]
             writing_obj_id = path[0]
 
+            uniq_obj.add(writeable_obj_id)
+
             try:
                 writeable_obj = self.node_objs[self.node_id_map_inv[writeable_obj_id]]
 
-                uniq_obj.add(writeable_obj_id)
                 uniq_types.add(writeable_obj.sid.type)
 
                 if isinstance(writeable_obj, overlay.IPCNode):
@@ -329,6 +331,41 @@ class Prolog(object):
                 print("Backing file %s" % fn)
                 print(self.inst.filesystem.list_path(fn))
                 pprint.pprint(fo)
+
+    def print_ipc_paths(self, args):
+        if not self.result:
+            return
+
+        cutoff = None
+        if len(args) > 0:
+            try:
+                cutoff = int(args[0])
+            except ValueError:
+                return
+
+        tmp_result = self.result.copy()
+
+        # filter ipc paths
+
+        self.result = []
+        for path in tmp_result:
+            is_thru_ipc = False
+            for component in path:
+
+                if component in self.node_id_map_inv:
+                    name = self.node_id_map_inv[component]
+                    obj = self.node_objs[name]
+                else:
+                    continue
+
+                if isinstance(obj, overlay.IPCNode):
+                    is_thru_ipc = True
+                    break
+
+            if is_thru_ipc: self.result.append(path)
+
+        self._pretty_print_results(cutoff=cutoff)
+        self.result = tmp_result
 
     def print_paths(self, args):
         if not self.result:
