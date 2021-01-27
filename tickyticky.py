@@ -33,6 +33,7 @@ print(myList)
 f.seek(0)
 counter = 0
 p = False
+g = open("result.txt", 'w')
 
 for rnge in myList:
     for line in f:
@@ -45,7 +46,8 @@ for rnge in myList:
         if p:
             # Add lines for the output write here. Just left at print
             # due to debugging reasons
-            print(line)
+            #print(line)
+            g.write(line)
         
         counter = counter + 1
 
