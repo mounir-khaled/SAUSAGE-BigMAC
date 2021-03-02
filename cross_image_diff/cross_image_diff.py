@@ -44,7 +44,7 @@ def main(aosp_img, oem_img, filter_ipc, top, strength):
             oem_proc_names = oem_img.resolve_proc_name(proc)
             oem_proc_name = oem_proc_names.pop()
             if oem_proc_names:
-                log.warning("Found multiple names for %s: %s. Using %s..." % (proc))
+                log.warning("Found multiple names for %s: %s. Using %s..." % (proc, str(oem_proc_names), oem_proc_name))
         except KeyError as e:
             log.error("%s does not exist in OEM image, skipping..." % str(e))
             continue
