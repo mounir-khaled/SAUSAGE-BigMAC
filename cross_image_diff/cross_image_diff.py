@@ -9,7 +9,6 @@ from image import *
 
 from difflib import Differ
 
-from config import *
 
 logging.basicConfig(format="%(asctime)s:%(name)s:%(levelname)s:%(message)s")
 logging.getLogger().setLevel(logging.CRITICAL)
@@ -21,7 +20,7 @@ log.setLevel(logging.DEBUG)
 
 logging.getLogger("process").setLevel(logging.WARNING)
 
-def main(aosp_img, oem_img, filter_ipc, top, strength):
+def main(aosp_img, oem_img, filter_ipc, filter_untrusted, top, strength):
     log.info("Initializing AOSP Image...")
     aosp_img = Image(aosp_img)
     log.info("Initializing OEM Image...")
@@ -57,6 +56,9 @@ def main(aosp_img, oem_img, filter_ipc, top, strength):
             oem_attack_surface = [path for path in oem_attack_surface if path[1].get_obj_type() == "ipc"]
 
         res = ipc_diff(aosp_attack_surface, oem_attack_surface, "right")
+        if filter_untrusted:
+            res = [p for p in res if "untrusted_app" in p]
+
         print("****** %s Attack Surface Diff ******" % proc)
         print("\n".join(res))
         print()
@@ -141,6 +143,7 @@ if __name__ == '__main__':
     parser.add_argument('--filter_ipc', action="store_true", help="Return only IPC objects (default=False)")
     parser.add_argument('--top', type=int, default=5, help="Number of top processes to diff (default=5)")
     parser.add_argument('--strength', default="nobj", help="Criteria to determine top processes. One of %s (default='nobj')" % list(Image.strength.keys()))
+    parser.add_argument('--filter_untrusted', action="store_true", help="Return attack surface paths from untrusted apps or external sources only")
 
     args = parser.parse_args()
     exit(main(**vars(args)))

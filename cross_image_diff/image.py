@@ -136,7 +136,7 @@ class Image:
         sp.run(process_args, cwd=bigmac_dir, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
 
         # Check if everything is ok now
-        should_exist = ["inst", "inst2", "inst3", "inst4", "inst5", "inst-map", "facts.pl"]
+        should_exist = {"inst", "inst2", "inst3", "inst4", "inst5", "inst-map", "facts.pl"}
         files_in_db = os.listdir(self.db_path)
         if any(f not in files_in_db for f in should_exist):
             raise Exception("Failed to generate files!!")
