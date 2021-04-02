@@ -138,8 +138,9 @@ class Image:
         # Check if everything is ok now
         should_exist = {"inst", "inst2", "inst3", "inst4", "inst5", "inst-map", "facts.pl"}
         files_in_db = os.listdir(self.db_path)
-        if any(f not in files_in_db for f in should_exist):
-            raise Exception("Failed to generate files!!")
+        missing_files = [f for f in should_exist if f not in files_in_db]
+        if missing_files:
+            raise Exception("Failed to generate files: %s!!" % missing_files)
 
 
     def load_inst(self):
