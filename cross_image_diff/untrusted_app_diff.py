@@ -33,6 +33,13 @@ def main(aosp_img, oem_img, filter_ipc):
     aosp_ua_writable = aosp_img.query(aosp_ua, QUERY_WILDCARD, 2)
     oem_ua_writable = oem_img.query(oem_ua, QUERY_WILDCARD, 2)
 
+    print("\naosp_ua_writable")
+    print("\n".join([render_path(p) for p in aosp_ua_writable]))
+    print("\noem_ua_writable")
+    print("\n".join([render_path(p) for p in oem_ua_writable]))
+    print()
+    print()
+
     oem_extra = full_diff(aosp_ua_writable, oem_ua_writable, "right")
     # filter redundant paths
     to_remove = []
@@ -74,7 +81,7 @@ def render_path(path, start=None, end=None):
 def diff(list1, list2, filter_param=""):
     d = Differ()
 
-    result = d.compare(list1, list2)
+    result = d.compare(sorted(list1), sorted(list2))
 
     result = list(filter(lambda x: not x.startswith('? '), result))
 
