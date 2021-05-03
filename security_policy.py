@@ -486,6 +486,7 @@ class ASPExtractor:
         # extract out properties from the filesystems
         self._extract_properties(combined_fs)
         self._extract_init(combined_fs)
+        self._extract_binaries(combined_fs)
 
         if "file_contexts.bin" in self.saved_files:
             log.info("Converting found file_contexts.bin to file_contexts")
@@ -607,6 +608,18 @@ class ASPExtractor:
 
             log.debug("Saving fstab: '%s'", rc)
             self.save_file(v["original_path"], os.path.join("init", rc[1:]))
+
+    def _extract_binaries(self, policy):
+        lDirz = os.listdir('/home/blas/BigMACplus/policy/aosp/angler-nrd90t-factory-75edc1f7/init/system/etc/init')
+        for thing in lDirz:
+                files = []
+                log.info("Searching for " + thing[:-3])
+                files = policy.find("*"+thing[:-3]+"*")
+                log.info("Found %d of your requested files", len(files))
+                for fDict in files:
+                        (rc, v), = fDict.items()
+                        log.debug("Saving your requested files")
+                        self.save_file(v["original_path"], os.path.join("thingRequested", rc[1:]))
 
     def _walk_filesystem(self, fs_name, fs_type, toplevel_path):
         def handle_error(exp):
