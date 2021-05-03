@@ -614,7 +614,7 @@ class ASPExtractor:
         for thing in lDirz:
                 files = []
                 log.info("Searching for " + thing[:-3])
-                files = policy.find("*"+thing[:-3]+"*")
+                files = policy.find("*"+thing[:-3])
                 log.info("Found %d of your requested files", len(files))
                 for fDict in files:
                         (rc, v), = fDict.items()
