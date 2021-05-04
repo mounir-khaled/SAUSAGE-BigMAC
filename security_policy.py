@@ -610,16 +610,41 @@ class ASPExtractor:
             self.save_file(v["original_path"], os.path.join("init", rc[1:]))
 
     def _extract_binaries(self, policy):
-        lDirz = os.listdir('/home/blas/BigMACplus/policy/aosp/angler-nrd90t-factory-75edc1f7/init/system/etc/init')
-        for thing in lDirz:
-                files = []
-                log.info("Searching for " + thing[:-3])
-                files = policy.find("*"+thing[:-3])
-                log.info("Found %d of your requested files", len(files))
-                for fDict in files:
-                        (rc, v), = fDict.items()
-                        log.debug("Saving your requested files")
-                        self.save_file(v["original_path"], os.path.join("thingRequested", rc[1:]))
+        rc_files = policy.find("*.rc")
+        binaries = set()
+        for rc_dict in rc_files:
+            path_on_fs, original_path = next((path_on_fs, details["original_path"]) for path_on_fs, details in rc_dict.items())
+            binaries.update(self._find_daemons_from_rc(original_path))
+
+        log.info("Found %d daemon binaries" % len(binaries))
+        for b_path in binaries:
+            try:
+                original_path = policy.files[b_path]["original_path"]
+            except KeyError as e:
+                log.error("Could not find %s in policy.files" % b_path)
+                continue
+
+            save_path = os.path.join("daemons", b_path[1:])
+            log.debug("Saving daemon binary: '%s'" % os.path.basename(b_path))
+            try:
+                self.save_file(original_path, save_path)
+            except FileNotFoundError as e:
+                log.error("Could not save %s: %s" % (b_path, e))
+                continue
+            
+
+    def _find_daemons_from_rc(self, rc_filepath):
+        daemons = []
+        with open(rc_filepath, 'r') as rc:
+            for line in rc:
+                line = line.strip()
+                if not line.startswith("service"):
+                    continue
+
+                daemons.append(line.split(" ")[2])
+
+        return daemons
+
 
     def _walk_filesystem(self, fs_name, fs_type, toplevel_path):
         def handle_error(exp):
