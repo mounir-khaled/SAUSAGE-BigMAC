@@ -291,6 +291,9 @@ class AndroidInit(object):
                 if self.services[service].disabled:
                     log.info("Enabling service %s", service)
                     self.services[service].disabled = False
+            else:
+                log.warning("Trying to enable unknown service %s" % service)
+            
         elif cmd == "write":
             pass
         elif cmd == "mount":
@@ -411,8 +414,8 @@ class AndroidInit(object):
         # other stages will be handled by internal actions
         self.main_loop()
 
-    def _import(self, path):
-        self.read_init_rc(self.expand_properties(path))
+    def _import(self, path, rel_to=""):
+        self.read_init_rc(self.expand_properties(path), rel_to)
 
     def read_uevent_rc(self, path):
         rc_path = self._init_rel_path(path)
@@ -513,8 +516,9 @@ class AndroidInit(object):
 
         self.root_fs.add_or_update_file(path, copy.deepcopy(file_policy))
 
-    def read_init_rc(self, path):
-        rc_path = self._init_rel_path(path)
+    def read_init_rc(self, path, rel_to=""):
+        rc_path = self._init_rel_path(path, rel_to)
+        rc_dir = os.path.dirname(path)
 
         rc_lines = ""
 
@@ -570,7 +574,7 @@ class AndroidInit(object):
             body = section[1:]
 
             if action == "import":
-                pending_imports += [args[0]]
+                pending_imports += [(args[0], rc_dir)]
             elif action == "service":
                 service_name = args[0]
                 service_args = args[1:]
@@ -587,11 +591,11 @@ class AndroidInit(object):
 
         log.debug("Loaded %s", path)
 
-        for imp in pending_imports:
+        for imp, rc_dir in pending_imports:
             try:
-                self._import(imp)
-            except IOError:
-                log.warn("Unable to import %s", imp)
+                self._import(imp, rc_dir)
+            except IOError as e:
+                log.warn("Unable to import %s: %s", imp, e)
 
     def _add_action(self, condition, commands):
         trigger_cond = TriggerCondition(self.props, condition)
@@ -614,6 +618,55 @@ class AndroidInit(object):
             opt_name = opt[0]
             opt_args = opt[1:]
             service.add_option(opt_name, opt_args)
+            if opt_name == "socket":
+                # socket thermal-send-client stream 0660 system system
+                socket_path = "/dev/socket/%s" % opt_args[0]
+                if socket_path in self.root_fs.files:
+                    continue
+
+                policy = {
+                    "original_path": None,
+                    "user": AID_MAP_INV['root'],
+                    "group": AID_MAP_INV['root'],
+                    "perms": int(opt_args[2], 8),
+                    "size": 4096,
+                    "link_path": "",
+                    "capabilities": None,
+                    "selinux": None,
+                    "owner_service": service
+                }
+
+                if len(opt_args) > 3:
+                    try:
+                        policy["user"] = AID_MAP_INV[opt_args[3]]
+                    except KeyError as e:
+                        max_aid = max(AID_MAP.keys())
+                        # Using values higher than 20000 as they are unreserved
+                        new_aid = max_aid if max_aid >= 200000 else 200000
+                        log.warning("Unrecognized AID name '%s'... Assigning value of %d",
+                                        opt_args[3], new_aid)
+                        AID_MAP[new_aid] = opt_args[3]
+                        AID_MAP_INV[opt_args[3]] = new_aid
+                        policy["user"] = new_aid
+
+                if len(opt_args) > 4:
+                    try:
+                        policy["group"] = AID_MAP_INV[opt_args[4]]
+                    except KeyError as e:
+                        max_aid = max(AID_MAP.keys())
+                        # Using values higher than 20000 as they are unreserved
+                        new_aid = max_aid if max_aid >= 200000 else 200000
+                        log.warning("Unrecognized AID name '%s'... Assigning value of %d",
+                                        opt_args[4], new_aid)
+                        AID_MAP[new_aid] = opt_args[4]
+                        AID_MAP_INV[opt_args[4]] = new_aid
+                        policy["group"] = new_aid
+
+                if len(opt_args) > 5:
+                    policy["selinux"] = opt_args[5]
+
+                self.root_fs.add_file(socket_path, policy)
+                
 
         self.services[service_name] = service
 
@@ -623,8 +676,10 @@ class AndroidInit(object):
         init_files = list(sorted(map(lambda x: x.replace(self.init_dir[:-1], ''), init_files)))
         return init_files
 
-    def _init_rel_path(self, path):
-        path = self.root_fs.realpath(path)
+    def _init_rel_path(self, path, rel_to=""):
+        # import pdb; pdb.set_trace()
+        if not os.path.isabs(path) and rel_to:
+            path = os.path.join(rel_to,path)
 
         if os.path.isabs(path):
             path = path[1:]

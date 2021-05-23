@@ -45,6 +45,7 @@ def main():
 
     parser.add_argument('--dont-expand-objects', action='store_true')
     parser.add_argument('--prolog', action='store_true', help="Compile Prolog helpers and start the query engine")
+    parser.add_argument('--compile-prolog', action='store_true', help="Compile Prolog helpers without starting the query engine")
 
     args = parser.parse_args()
 
@@ -125,14 +126,16 @@ def main():
 
         with open(output_filename, 'w') as fp:
             fp.write(inst.list_processes())
-
-    if args.prolog:
+            
+    if args.compile_prolog or args.prolog:
         G = inst.fully_instantiate()
 
         pl = Prolog(G, aspc.db_dir, inst, asp)
 
-        if pl.compile_all():
+        is_compiled = pl.compile_all()
+        if is_compiled and args.prolog:
             pl.interact()
+       
 
     if args.draw_graph:
         GDF = graph["graphs"]["dataflow"]

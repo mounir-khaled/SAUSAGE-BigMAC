@@ -389,7 +389,7 @@ class SEPolicyInst(object):
                 node = SubjectNode(Cred())
         else:
             if teclass in ['drmservice', 'debuggerd', 'property_service', 'service_manager', 'hwservice_manager',
-                    'binder', 'key', 'msg', 'system', 'security', 'keystore_key', 'zygote']:
+                    'binder', 'key', 'msg', 'system', 'security', 'keystore_key', 'zygote', 'keystore_moto_key']:
                 node = IPCNode(teclass)
             elif teclass in ['netif', 'peer', 'node']:
                 node = IPCNode("socket")
@@ -922,6 +922,13 @@ class SEPolicyInst(object):
             crashes.state = ProcessState.RUNNING
             log.info("Spawned crash_dump %s from %s", repr(crashes), repr(app_parent))
 
+        # untrusted apps can have any of the following groups through the permission-gid mapping:
+        # https://android.googlesource.com/platform/frameworks/base/+/master/data/etc/platform.xml
+        # https://cs.android.com/android/platform/superproject/+/master:system/core/libcutils/include/private/android_filesystem_config.h
+        # Some permissions cannot be accessed by third-party apps, we don't use those
+        # https://developer.android.com/reference/android/Manifest.permission
+        # untrusted_app_groups = ["inet", "net_bt_admin", "net_bt", "bluetooth", "external_storage"]
+        untrusted_app_gids = [3003, 3001, 3002, 1002, 1077]
         for primary_app in sorted(untrusted_apps, key=lambda x: x.subject.sid.type):
             primary_app.cred = app_parent.cred.execve(new_sid=primary_app.subject.sid)
             # Drop any supplemental groups from init
@@ -930,7 +937,10 @@ class SEPolicyInst(object):
 
             primary_app.cred.uid = 10000+app_id
             primary_app.cred.gid = 10000+app_id
-            primary_app.cred.add_group('inet')
+            
+            for gid in untrusted_app_gids:
+                primary_app.cred.add_group(gid)
+
             primary_app.cred.add_group('everybody')
             primary_app.cred.add_group(50000+app_id)
             primary_app.state = ProcessState.RUNNING
@@ -1437,8 +1447,8 @@ Groups:\t%s
 
             split_ipc_nodes += [name]
 
-        owner_name = "subject:kernel"
-        GS_flat.add_node("subject:kernel", obj=self.subjects["kernel"])
+        # owner_name = "subject:kernel"
+        # GS_flat.add_node("subject:kernel", obj=self.subjects["kernel"])
 
         for on, obj in self.objects.items():
             ot = obj.get_obj_type()
@@ -1450,7 +1460,26 @@ Groups:\t%s
             is_special = False
             for fn, fo in obj.backing_files.items():
                 if fn.startswith("/dev/") or fn.startswith("/sys/"):
-                    log.info("%s %s is special", obj, fn)
+                    subject_name = "kernel"
+
+                    if "owner_service" in fo:
+                        owner_service = fo["owner_service"]
+                        subject_name = os.path.basename(owner_service.service_args[0])
+                        if subject_name not in self.subjects:
+                            service_name = owner_service.service_name                            
+                            log.warning("Subject %s not found while trying to find owner of %s, trying %s",
+                                        subject_name, fn, service_name)
+
+                            subject_name = service_name
+                            if subject_name not in self.subjects:
+                                log.error("Owner of %s not found, setting as subject:kernel", fn)
+                                subject_name = "kernel"
+                    
+                    owner_name = "subject:%s" % subject_name
+                    subject = self.subjects[subject_name]
+                    GS_flat.add_node(owner_name, obj=subject)
+
+                    log.info("%s %s is special, owner is %s", obj, fn, owner_name)
                     is_special = True
                     break
 
