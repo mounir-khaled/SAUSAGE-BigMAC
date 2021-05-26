@@ -769,18 +769,21 @@ class SEPolicyInst(object):
 
             found_service = None
 
+            (fn, _), = init_child.exe.items()
             for sname, service in sorted(list(self.init.services.items())):
-                (fn, _), = init_child.exe.items()
+                
                 cmd = self.filesystem.realpath(service.service_args[0])
 
-                if cmd == fn and not service.oneshot:
-                    if found_service:
+                if cmd == fn:
+                    if service.oneshot:
+                        log.info("Service %s is oneshot, ignoring...", service.service_name)
                         continue
 
                     found_service = service
+                    break
 
             if not found_service:
-                log.warn("Could not find a service definition for process %s", init_child)
+                log.warn("Could not find a service definition for process %s (fn=%s)", init_child, fn)
                 continue
 
             # TODO: handle disabled services
@@ -1447,8 +1450,8 @@ Groups:\t%s
 
             split_ipc_nodes += [name]
 
-        # owner_name = "subject:kernel"
-        # GS_flat.add_node("subject:kernel", obj=self.subjects["kernel"])
+        owner_name = "subject:kernel"
+        GS_flat.add_node("subject:kernel", obj=self.subjects["kernel"])
 
         for on, obj in self.objects.items():
             ot = obj.get_obj_type()

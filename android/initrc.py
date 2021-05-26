@@ -370,6 +370,7 @@ class AndroidInit(object):
             if key in self.props:
                 value = self.props[key]
             else:
+                log.warning("Failed property lookup for property %s in %s", key, string)
                 value = ""
 
             new_string = new_string.replace(m.group(0), value)
@@ -593,6 +594,7 @@ class AndroidInit(object):
 
         for imp, rc_dir in pending_imports:
             try:
+                log.info("importing %s from %s", imp, rc_dir)
                 self._import(imp, rc_dir)
             except IOError as e:
                 log.warn("Unable to import %s: %s", imp, e)

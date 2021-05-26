@@ -9,7 +9,8 @@ import glob
 import pickle
 import copy
 from fnmatch import fnmatch
-from subprocess import Popen
+from subprocess import Popen, PIPE
+import re
 
 from config import *
 from android.property import AndroidPropertyList
@@ -179,7 +180,7 @@ class FilesystemPolicy:
                     total_path = tpath
             else:
                 total_path = tpath
-                break
+                # break
 
         return total_path
 
@@ -486,7 +487,11 @@ class ASPExtractor:
         # extract out properties from the filesystems
         self._extract_properties(combined_fs)
         self._extract_init(combined_fs)
-        self._extract_binaries(combined_fs)
+        # extract service binaries and their external dependencies
+        deps = self._extract_binaries(combined_fs)
+        # extract all external dependencies
+        self._extract_shared_objects(combined_fs, deps)
+        
 
         if "file_contexts.bin" in self.saved_files:
             log.info("Converting found file_contexts.bin to file_contexts")
@@ -609,9 +614,25 @@ class ASPExtractor:
             log.debug("Saving fstab: '%s'", rc)
             self.save_file(v["original_path"], os.path.join("init", rc[1:]))
 
+    def _extract_shared_objects(self, policy, deps):
+        for dep in deps:
+            try:
+                so_files = policy.find(dep)
+            except KeyError:
+                log.error("Failed to find dependency: %s", dep)
+
+            for so_dict in so_files:
+                (so, v), = so_dict.items()
+                log.debug("Saving shared object '%s'", so)
+                try:
+                    self.save_file(v["original_path"], os.path.join("daemons", so[1:]))
+                except FileNotFoundError as e:
+                    log.error(e)
+
     def _extract_binaries(self, policy):
         rc_files = policy.find("*.rc")
         binaries = set()
+        dependencies = set()
         for rc_dict in rc_files:
             path_on_fs, original_path = next((path_on_fs, details["original_path"]) for path_on_fs, details in rc_dict.items())
             binaries.update(self._find_daemons_from_rc(original_path))
@@ -631,7 +652,42 @@ class ASPExtractor:
             except FileNotFoundError as e:
                 log.error("Could not save %s: %s" % (b_path, e))
                 continue
-            
+
+            dependencies.update(self._find_dependencies(policy, b_path))
+
+        log.info("Found %d daemon dependencies", len(dependencies))
+        return dependencies
+
+    def _find_dependencies(self, policy, bin_path):
+        deps = set()
+
+        dep_queue = [bin_path]
+        while dep_queue:
+            dep = dep_queue.pop()
+            for so_name in self._find_so_names(policy, bin_path):
+                so_files = policy.find("**/%s" % so_name)
+                for so_dict in so_files:
+                    path_on_fs = next(iter(so_dict.keys()))
+                    if not path_on_fs in deps:
+                        deps.add(path_on_fs)
+                        dep_queue.insert(0, path_on_fs)
+
+        return deps
+
+    def _find_so_names(self, policy, bin_path):
+        real_path = policy.files[bin_path]["original_path"]
+
+        so_pattern = re.compile(r"\[(?P<so>.+)\]")
+        p = Popen(["readelf", "-d", real_path], stdout=PIPE, universal_newlines=True)
+        for line in p.stdout:
+            if "Shared library" in line:
+                m = so_pattern.search(line)
+                if not m:
+                    log.error("readelf: %s", line)
+                    continue
+
+                so_name = m.group("so")
+                yield so_name
 
     def _find_daemons_from_rc(self, rc_filepath):
         daemons = []
