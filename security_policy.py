@@ -408,7 +408,7 @@ class ASPExtractor:
                     continue
             elif len(match) > 1:
                 log.error("More than one %s filesystem found. Cannot disambiguate", fs["name"])
-                sys.exit(1)
+                # sys.exit(1)
 
             # only one match supported
             match = match[0]
