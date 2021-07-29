@@ -514,7 +514,7 @@ class ASPExtractor:
         return self.asp
 
     def _firmware_extract_task(self, filepath, skip=False):
-        job_result_dir = os.path.join(os.environ['HOME'], 'atsh_tmp' + self.job_id)
+        job_result_dir = os.path.join(filepath) #os.path.join(os.environ['HOME'], 'atsh_tmp' + self.job_id)
 
         # Mounted file systems: /home/atsh_tmp0/mnt*
         # Extracted file systems: ./extract/VENDOR/BASENAME/
@@ -536,12 +536,12 @@ class ASPExtractor:
             p = Popen([AT_EXTRACT_PATH, filepath, vendor_name, self.job_id, '1', '0'])
             p.communicate()
             # TODO: check for error
+        
+        #if not os.path.isdir(job_result_dir):
+        #    log.error("No filesystem result directory found. Possible extraction error")
+        #    return []
 
-        if not os.path.isdir(job_result_dir):
-            log.error("No filesystem result directory found. Possible extraction error")
-            return []
-
-        fs_prefix = "mnt_"
+        fs_prefix = ""#"mnt_"
         mounted_filesystems = glob.glob(os.path.join(job_result_dir, fs_prefix + '*'))
         extracted_filesystems = list(directories(os.path.join(firmware_extracted_path)))
 
