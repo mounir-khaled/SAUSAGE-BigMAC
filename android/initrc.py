@@ -187,7 +187,10 @@ class AndroidInit(object):
         while len(self.queue):
             action = self.queue.pop(0)
             for cmd in action.commands:
-                self.execute(cmd[0], cmd[1:])
+                try:
+                    self.execute(cmd[0], cmd[1:])
+                except Exception as e:
+                    log.error("Unhandled exception while executing '%s': %s", " ".join(cmd), e)
 
     def execute(self, cmd, args):
         self.stats["commands"] += 1
