@@ -363,13 +363,29 @@ class ASPExtractor:
         self.saved_files = {}
         self.job_id = job_id
 
-    def save_file(self, source, path, overwrite=False):
+    def fix_symlink(self, path):
+        if not os.path.islink(path):
+            return path
+
+        links_to = os.readlink(path)
+        if links_to.startswith("/vendor"):
+            fw_name = self.asp.firmware_name
+            extract_dir = path[:path.find(fw_name) + len(fw_name)]
+            path = os.path.join(extract_dir, "vendor.img", links_to[len("/vendor")+1:])
+
+        return path
+
+    def save_file(self, source, path, overwrite=False, copy_symlink=False):
         save_path = os.path.join(self.results_directory, path)
         mkdir_recursive(os.path.dirname(save_path))
 
         if os.path.isfile(save_path) and not overwrite:
             log.warning("Not overwriting saved file '%s': existing file found", path)
             return
+
+        # print(source)
+        if copy_symlink and os.path.islink(source):
+            source = self.fix_symlink(source)
 
         shutil.copyfile(source, save_path)
         self.saved_files[path] = {"save_path": save_path}
@@ -477,10 +493,10 @@ class ASPExtractor:
                     continue
 
                 file_name = os.path.basename(p["original_path"])
-                self.save_file(p["original_path"], file_name)
-
                 log.info("Saving SELinux policy file '%s' from '%s'",
                          filebase, combined_fs.fsname)
+                self.save_file(p["original_path"], file_name, copy_symlink=True)
+                
 
         # TODO: double check that we found a complete SEAndroid policy
 
@@ -582,7 +598,7 @@ class ASPExtractor:
             props.from_file(v["original_path"])
 
             log.debug("Saving .prop file '%s'", k)
-            self.save_file(v["original_path"], os.path.join("prop", k[1:]))
+            self.save_file(v["original_path"], os.path.join("prop", k[1:]), copy_symlink=True)
 
         # If we can't find this, we're in trouble
         if 'ro.build.version.release' not in props:
@@ -602,7 +618,7 @@ class ASPExtractor:
             (rc, v), = rc_dict.items()
 
             log.debug("Saving init.rc file '%s'", rc)
-            self.save_file(v["original_path"], os.path.join("init", rc[1:]))
+            self.save_file(v["original_path"], os.path.join("init", rc[1:]), copy_symlink=True)
 
         fstab_files = policy.find("*fstab*")
 
@@ -612,7 +628,7 @@ class ASPExtractor:
             (rc, v), = rc_dict.items()
 
             log.debug("Saving fstab: '%s'", rc)
-            self.save_file(v["original_path"], os.path.join("init", rc[1:]))
+            self.save_file(v["original_path"], os.path.join("init", rc[1:]), copy_symlink=True)
 
     def _extract_shared_objects(self, policy, deps):
         for dep in deps:
@@ -625,7 +641,7 @@ class ASPExtractor:
                 (so, v), = so_dict.items()
                 log.debug("Saving shared object '%s'", so)
                 try:
-                    self.save_file(v["original_path"], os.path.join("daemons", so[1:]))
+                    self.save_file(v["original_path"], os.path.join("daemons", so[1:]), copy_symlink=True)
                 except FileNotFoundError as e:
                     log.error(e)
 
@@ -639,16 +655,34 @@ class ASPExtractor:
 
         log.info("Found %d daemon binaries" % len(binaries))
         for b_path in binaries:
+            if not b_path.strip():
+                continue
+
+            original_path = ""
             try:
                 original_path = policy.files[b_path]["original_path"]
             except KeyError as e:
-                log.error("Could not find %s in policy.files" % b_path)
-                continue
+                b_name = os.path.basename(b_path)
+                log.warning("Could not find '%s' in policy.files, searching by '%s'", b_path, b_name)
+                
+                matches = policy.find("*%s" % b_name)
+                file_matches = []
+                for m in matches:
+                    path_on_fs, details = next(iter(m.items()))
+                    orig_path = details["original_path"]
+                    if details["link_path"] == "" and os.path.isfile(orig_path):
+                        file_matches.append((path_on_fs, orig_path))
+
+                if not file_matches:
+                    log.error("Binary file '%s' not found", b_path)
+                    continue
+
+                b_path, original_path = file_matches[0]
 
             save_path = os.path.join("daemons", b_path[1:])
             log.debug("Saving daemon binary: '%s'" % os.path.basename(b_path))
             try:
-                self.save_file(original_path, save_path)
+                self.save_file(original_path, save_path, copy_symlink=True)
             except FileNotFoundError as e:
                 log.error("Could not save %s: %s" % (b_path, e))
                 continue
@@ -676,6 +710,7 @@ class ASPExtractor:
 
     def _find_so_names(self, policy, bin_path):
         real_path = policy.files[bin_path]["original_path"]
+        real_path = self.fix_symlink(real_path)
 
         so_pattern = re.compile(r"\[(?P<so>.+)\]")
         p = Popen(["readelf", "-d", real_path], stdout=PIPE, universal_newlines=True)
