@@ -58,7 +58,7 @@ def cleanupLists():
 
 def printLists():
     print("---MediaFire---")
-    #print(mediafireLinks)
+    print(mediafireLinks)
     print("---Google---")
     print(googleLinks)
     print("---AndroidFileHost---")
