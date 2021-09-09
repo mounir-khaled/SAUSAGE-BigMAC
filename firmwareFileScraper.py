@@ -21,7 +21,8 @@ def googleDL(vendor):
         try:
             FILENAME = str(gfiltered).split('<')[-3].split('>')[1]
         except IndexError:
-            return print("Drive link is blocked")
+            print("Drive link is blocked")
+            continue
         wgetLoadCookies = "wget --load-cookies /tmp/cookies.txt"
         weirdStuff = f"https://docs.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id={FILEID}' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\\1\\n/p')&id={FILEID}"
         fileSave = f"-O {FILENAME}"
@@ -57,7 +58,7 @@ def cleanupLists():
 
 def printLists():
     print("---MediaFire---")
-    print(mediafireLinks)
+    #print(mediafireLinks)
     print("---Google---")
     print(googleLinks)
     print("---AndroidFileHost---")
@@ -215,15 +216,15 @@ def start(vendor):
 
 def main():
     s = time.time()
-    #vendors = list(map(str,input("Vendors: ").strip().split()))
-    vendors = ["huawei"]
+    vendors = list(map(str,input("Vendors: ").strip().split()))
+    #vendors = ["huawei"]
     for vendor in vendors:
-        #os.system(f"mkdir {vendor}") # If you already have the directory it'll just fail so no worries
+        os.system(f"mkdir {vendor}") # If you already have the directory it'll just fail so no worries
         start(vendor)
         print("---BAG SECURED---")
         printLists()
-        #download(vendor) # Can comment out for testing purposes
-        #cleanupLists()
+        download(vendor) # Can comment out for testing purposes
+        cleanupLists()
         print("---" + vendor + " Done---")
     e = time.time()
     print(f"Runtime of the program is {e - s}")
