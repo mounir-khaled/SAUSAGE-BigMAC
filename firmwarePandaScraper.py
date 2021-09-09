@@ -235,7 +235,7 @@ def main():
         start(vendor)
         print("---BAG SECURED---")
         printLists()
-        #download(vendor) # Can comment out for testing purposes
+        download(vendor) # Can comment out for testing purposes
         cleanupLists()
         print("---" + vendor + " Done---")
     e = time.time()
