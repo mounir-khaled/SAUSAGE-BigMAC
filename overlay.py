@@ -389,7 +389,7 @@ class SEPolicyInst(object):
                 node = SubjectNode(Cred())
         else:
             if teclass in ['drmservice', 'debuggerd', 'property_service', 'service_manager', 'hwservice_manager',
-                    'binder', 'key', 'msg', 'system', 'security', 'keystore_key', 'zygote', 'keystore_moto_key']:
+                    'binder', 'key', 'msg', 'system', 'security', 'keystore_key', 'zygote', 'keystore_moto_key', "kernel_service"]:
                 node = IPCNode(teclass)
             elif teclass in ['netif', 'peer', 'node']:
                 node = IPCNode("socket")
@@ -917,8 +917,10 @@ class SEPolicyInst(object):
         # spawn an untrusted app
         app_parent = system_server_parent
         untrusted_apps = list(filter(lambda x: "untrusted_app" in x.subject.sid.type, app_parent.children))
+        system_apps = [c for c in app_parent.children if c.subject.sid.type in ("system_app", "priv_app")]
+        # untrusted_apps = list(filter(lambda x: "_app" in x.subject.sid.type, app_parent.children))
+
         crash_dump = list(filter(lambda x: "crash_dump" in x.subject.sid.type, app_parent.children))
-        app_id = 0
 
         for crashes in sorted(crash_dump, key=lambda x: x.subject.sid.type):
             crashes.cred = app_parent.cred.execve(new_sid=crashes.subject.sid)
@@ -931,6 +933,13 @@ class SEPolicyInst(object):
         # Some permissions cannot be accessed by third-party apps, we don't use those
         # https://developer.android.com/reference/android/Manifest.permission
         # untrusted_app_groups = ["inet", "net_bt_admin", "net_bt", "bluetooth", "external_storage"]
+        self.spawn_system_apps(app_parent, system_apps)
+        self.spawn_untrusted_apps(app_parent, untrusted_apps)
+
+        return True
+
+    def spawn_untrusted_apps(self, app_parent, untrusted_apps):
+        app_id = 0
         untrusted_app_gids = [3003, 3001, 3002, 1002, 1077]
         for primary_app in sorted(untrusted_apps, key=lambda x: x.subject.sid.type):
             primary_app.cred = app_parent.cred.execve(new_sid=primary_app.subject.sid)
@@ -950,7 +959,30 @@ class SEPolicyInst(object):
             log.info("Spawned untrusted_app %s from %s", repr(primary_app), repr(app_parent))
             app_id += 1
 
-        return True
+    def spawn_system_apps(self, app_parent, system_apps):
+        # app_id = 0
+        system_app_groups = ["net_bt_admin", "net_bt", "bluetooth", "wakelock", "uhid", "vpn", "inet", "log", "external_storage", "mtp", "net_admin", "net_admin", "net_raw", "cache", "input", "diag", "net_bw_stats", "net_bw_acct", "loop_radio", "audio", "media", "reserved_disk"]
+        
+        for primary_app in sorted(system_apps, key=lambda x: x.subject.sid.type):
+            primary_app.cred = app_parent.cred.execve(new_sid=primary_app.subject.sid)
+            # Drop any supplemental groups from init
+            primary_app.cred.clear_groups()
+            primary_app.cred.cap.drop_all()
+
+            primary_app.cred.uid = AID_MAP_INV["system"]
+            primary_app.cred.gid = AID_MAP_INV["system"]
+            
+            for group in system_app_groups:
+                try:
+                    primary_app.cred.add_group(group)
+                except KeyError:
+                    log.error("Unknown group '%s'", group)
+
+            primary_app.cred.add_group('everybody')
+            # primary_app.cred.add_group(50000+app_id)
+            primary_app.state = ProcessState.RUNNING
+            log.info("Spawned system_app %s from %s", repr(primary_app), repr(app_parent))
+            # app_id += 1
 
     def list_processes(self):
         proc_output = ""
@@ -1783,7 +1815,7 @@ Groups:\t%s
                         elif edge["teclass"] in ["cap_userns", "cap2_userns"]:
                             continue
                         else:
-                            raise ValueError("Ignoring MAC edge <%s> -[%s]-> <%s>" % (subject_name, edge["teclass"], obj_name))
+                            log.error("Ignoring MAC edge <%s> -[%s]-> <%s>" % (subject_name, edge["teclass"], obj_name))
 
                     domain_name = subject.get_node_name()
 

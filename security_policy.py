@@ -196,8 +196,11 @@ class FilesystemPolicy:
             (fn, fo), = f.items()
 
             size = str(fo["size"])
-            user = AID_MAP[fo["user"]]
-            group = AID_MAP[fo["group"]]
+            # user = AID_MAP[fo["user"]]
+            # group = AID_MAP[fo["group"]]
+            user = AID_MAP.get(fo["user"], "UID=%d" % fo["user"])
+            group = AID_MAP.get(fo["group"], "GID=%d" % fo["group"])
+            
             secontext = str(fo["selinux"])
 
 
