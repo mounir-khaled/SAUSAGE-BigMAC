@@ -16,9 +16,9 @@ def googleDL(vendor):
         gURL = f"https://drive.google.com/u/0/uc?id={FILEID}&export=download"
         gpage = requests.get(gURL)
         gsoup = BeautifulSoup(gpage.content, "html.parser")
-        gresults = gsoup.find(id="uc-text")
-        gfiltered = gresults.find_all("span", class_="uc-name-size")
         try:
+            gresults = gsoup.find(id="uc-text")
+            gfiltered = gresults.find_all("span", class_="uc-name-size")
             FILENAME = str(gfiltered).split('<')[-3].split('>')[1]
         except IndexError:
             print("Drive link is blocked")
