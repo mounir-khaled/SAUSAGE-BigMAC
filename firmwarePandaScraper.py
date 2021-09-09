@@ -131,7 +131,7 @@ def getWaitingLinks(filteredLinks):
                 #print("Currently at ", c) # Here for debugging purposes
                 try:
                     # The OS Version is NA
-                    if "NA" in str(c):
+                    if "NA" in str(c) or "N/A" in str(c):
                         continue
                     elif int(str(c).split(':')[1].strip()[0]) >= 7:
                         #print(c) # Print the Android OS Version it found for debugging purposes
@@ -231,11 +231,11 @@ def main():
     s = time.time()
     vendors = list(map(str,input("Vendors: ").strip().split()))
     for vendor in vendors:
-        os.system(f"mkdir {vendor}")
+        os.system(f"mkdir {vendor}") # If you already have the directory it'll just fail so no worries
         start(vendor)
         print("---BAG SECURED---")
         printLists()
-        download(vendor)
+        #download(vendor) # Can comment out for testing purposes
         cleanupLists()
         print("---" + vendor + " Done---")
     e = time.time()
@@ -249,10 +249,11 @@ The scraper extracts all the links that are on FirmwarePanda for any given vendo
 It will specifically look for links to images that are equal to or greater than Android 7
 It currently is capable of downloading MediaFire and GoogleDrive links
 It can also infer the Android OS Version based off the file name if the OS Version is not provided
+Preliminary tests conducted verifying all necessary URLs are extracted and downloads are successful
 
 TODOs:
 x Get Android File Host working
-x Do preliminary test to see if it can get all URLS and downloads for all vendors
+x Remove OTA (I think should just be done later)
 x Leave running on Frank
 x Start trying to get it to work on FirmwareFile.com
 """
