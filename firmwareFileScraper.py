@@ -18,7 +18,10 @@ def googleDL(vendor):
         gsoup = BeautifulSoup(gpage.content, "html.parser")
         gresults = gsoup.find(id="uc-text")
         gfiltered = gresults.find_all("span", class_="uc-name-size")
-        FILENAME = str(gfiltered).split('<')[-3].split('>')[1]
+        try:
+            FILENAME = str(gfiltered).split('<')[-3].split('>')[1]
+        except IndexError:
+            return print("Drive link is blocked")
         wgetLoadCookies = "wget --load-cookies /tmp/cookies.txt"
         weirdStuff = f"https://docs.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id={FILEID}' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\\1\\n/p')&id={FILEID}"
         fileSave = f"-O {FILENAME}"
