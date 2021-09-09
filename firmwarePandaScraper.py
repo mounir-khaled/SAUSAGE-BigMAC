@@ -133,14 +133,14 @@ def getWaitingLinks(filteredLinks):
                     # The OS Version is NA
                     if "NA" in str(c) or "N/A" in str(c):
                         continue
-                    elif int(str(c).split(':')[1].strip()[0]) >= 7:
+                    elif int(str(c).split(':')[1].strip()[0]) > 7:
                         #print(c) # Print the Android OS Version it found for debugging purposes
                         getLinkIndicator.append(counter)
                 except ValueError:
                     # The OS Version string is malformatted
                     if (str(c).split(':')[1].strip()) == '</p>':
                         continue
-                    elif int(str(c).split('>')[3].split('.')[0]) >= 7:
+                    elif int(str(c).split('>')[3].split('.')[0]) > 7:
                         #print(c) # Print the Android OS Version it found for debugging purposes
                         getLinkIndicator.append(counter)
             # The Android OS Version is not available so we infer it from the file name
@@ -149,7 +149,7 @@ def getWaitingLinks(filteredLinks):
                 version = versionExtractor(str(c).split()[2].split('<')[0])
                 if len(version.strip()) == 0:
                     continue
-                elif int(version.split('.')[0]) >= 7:
+                elif int(version.split('.')[0]) > 7:
                     getLinkIndicator.append(counter)
 
         tempCounter = 0
@@ -246,7 +246,7 @@ main()
 """
 STATUS:
 The scraper extracts all the links that are on FirmwarePanda for any given vendor
-It will specifically look for links to images that are equal to or greater than Android 7
+It will specifically look for links to images that are greater than Android 7.x.x
 It currently is capable of downloading MediaFire and GoogleDrive links
 It can also infer the Android OS Version based off the file name if the OS Version is not provided
 Preliminary tests conducted verifying all necessary URLs are extracted and downloads are successful
