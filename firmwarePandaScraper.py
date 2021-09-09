@@ -38,8 +38,8 @@ def mediafireDL(vendor):
         os.system('%s %s "%s"' % ('wget -P', vendor, dlink))
 
 def download(vendor):
-    #if len(mediafireLinks) != 0:
-        #mediafireDL(vendor)
+    if len(mediafireLinks) != 0:
+        mediafireDL(vendor)
     if len(googleLinks) != 0:
         googleDL(vendor)
     if len(androidfilehostLinks) != 0:
@@ -83,6 +83,35 @@ def getFinalLinks(waitingLinks):
         else:
             other.append(wlink)
 
+def versionExtractor(fileName):
+    if fileName.endswith(".zip"):
+        fileName = fileName[:-4]
+    findNum = fileName.split('_')
+    findLargestVersion = False
+    tmpCounter = 0
+    intSearch = []
+    finalVersion = ''
+    
+    # Finds for part of filename that goes x.x.x
+    for part in findNum:
+        if '.' in str(part) and part[0].isnumeric():
+            findLargestVersion = False
+            finalVersion = part
+        elif part.isnumeric():
+            findLargestVersion = True
+            tmpCounter = tmpCounter + 1
+            intSearch.append(part)
+    
+    # At times the Android version is just a single digit
+    if tmpCounter > 1 and findLargestVersion:
+        for i in intSearch:
+            if int(i) > 11 or int(i) < 7:
+                continue
+            else:
+                return i
+
+    return finalVersion
+
 def getWaitingLinks(filteredLinks):
     # Get the link for the 20 second wait page, aka each unique firmware link
     waitingLinks = []
@@ -114,6 +143,14 @@ def getWaitingLinks(filteredLinks):
                     elif int(str(c).split('>')[3].split('.')[0]) >= 7:
                         #print(c) # Print the Android OS Version it found for debugging purposes
                         getLinkIndicator.append(counter)
+            # The Android OS Version is not available so we infer it from the file name
+            elif "File Name" in str(c):
+                counter = counter + 1
+                version = versionExtractor(str(c).split()[2].split('<')[0])
+                if len(version.strip()) == 0:
+                    continue
+                elif int(version.split('.')[0]) >= 7:
+                    getLinkIndicator.append(counter)
 
         tempCounter = 0
         for d in lfiltered[0].find_all('a', href=True):
@@ -158,7 +195,7 @@ def getPages(linksList, traverse):
     try:
         pages = int(max(tmp))
     except ValueError:
-        # One page or vendor does not exist
+        # It is either one page or the vendor does not exist
         traverse = False
         return traverse
     return pages
@@ -192,7 +229,6 @@ def start(vendor):
 
 def main():
     s = time.time()
-    #vendor = str(input("Vendors: "))
     vendors = list(map(str,input("Vendors: ").strip().split()))
     for vendor in vendors:
         os.system(f"mkdir {vendor}")
@@ -209,13 +245,13 @@ main()
 
 """
 STATUS:
-Right now it extracts all the links that are on FirmwarePanda for any given vendor
+The scraper extracts all the links that are on FirmwarePanda for any given vendor
 It will specifically look for links to images that are equal to or greater than Android 7
 It currently is capable of downloading MediaFire and GoogleDrive links
+It can also infer the Android OS Version based off the file name if the OS Version is not provided
 
 TODOs:
 x Get Android File Host working
-x Add file name inference for those that don't have the version available
 x Do preliminary test to see if it can get all URLS and downloads for all vendors
 x Leave running on Frank
 x Start trying to get it to work on FirmwareFile.com
