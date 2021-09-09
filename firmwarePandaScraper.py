@@ -7,6 +7,25 @@ mediafireLinks = []
 androidfilehostLinks = []
 other = []
 
+def googleDL(vendor):
+    # Mostly stable but there are times that for whatever reason the file does not redirect and wget ends up downloading the html web-page instead of the zip file
+    # Would want to look into it to increase stability, but seems to be good for now
+    print("Downloading GoogleDrive Firmware for " + vendor)
+    for drive in googleLinks:
+        FILEID = drive.split('/')[-2]
+        gURL = f"https://drive.google.com/u/0/uc?id={FILEID}&export=download"
+        gpage = requests.get(gURL)
+        gsoup = BeautifulSoup(gpage.content, "html.parser")
+        gresults = gsoup.find(id="uc-text")
+        gfiltered = gresults.find_all("span", class_="uc-name-size")
+        FILENAME = str(gfiltered).split('<')[-3].split('>')[1]
+        wgetLoadCookies = "wget --load-cookies /tmp/cookies.txt"
+        weirdStuff = f"https://docs.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id={FILEID}' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\\1\\n/p')&id={FILEID}"
+        fileSave = f"-O {FILENAME}"
+        cleanCookiesDirSave = f"&& rm -rf /tmp/cookies.txt && mv {FILENAME} {vendor}/"
+        # Sauce: https://bcrf.biochem.wisc.edu/2021/02/05/download-google-drive-files-using-wget/
+        os.system('%s "%s" %s %s' % (wgetLoadCookies, weirdStuff, fileSave, cleanCookiesDirSave))
+
 def mediafireDL(vendor):
     # Original file name is necessary so using spaghetti code
     print("Downloading MediaFire Firmware for " + vendor)
@@ -19,11 +38,10 @@ def mediafireDL(vendor):
         os.system('%s %s "%s"' % ('wget -P', vendor, dlink))
 
 def download(vendor):
-    if len(mediafireLinks) != 0:
-        mediafireDL(vendor)
+    #if len(mediafireLinks) != 0:
+        #mediafireDL(vendor)
     if len(googleLinks) != 0:
-        print("No support for Google yet")
-    #    googleDL()
+        googleDL(vendor)
     if len(androidfilehostLinks) != 0:
     #    afhDL()
         print("No support for AndroidFileHost yet")
@@ -177,10 +195,11 @@ def main():
     #vendor = str(input("Vendors: "))
     vendors = list(map(str,input("Vendors: ").strip().split()))
     for vendor in vendors:
+        os.system(f"mkdir {vendor}")
         start(vendor)
         print("---BAG SECURED---")
         printLists()
-        #download(vendor)
+        download(vendor)
         cleanupLists()
         print("---" + vendor + " Done---")
     e = time.time()
@@ -192,12 +211,12 @@ main()
 STATUS:
 Right now it extracts all the links that are on FirmwarePanda for any given vendor
 It will specifically look for links to images that are equal to or greater than Android 7
-It currently is only capable of downloading MediaFire links
+It currently is capable of downloading MediaFire and GoogleDrive links
 
 TODOs:
-x Get Google download working
 x Get Android File Host working
+x Add file name inference for those that don't have the version available
 x Do preliminary test to see if it can get all URLS and downloads for all vendors
 x Leave running on Frank
-x Start trying to get it to work on FirmwareFile
+x Start trying to get it to work on FirmwareFile.com
 """
