@@ -19,6 +19,10 @@ def googleDL(vendor):
         try:
             gresults = gsoup.find(id="uc-text")
             gfiltered = gresults.find_all("span", class_="uc-name-size")
+        except AttributeError:
+            print("This page is empty")
+            continue
+        try:
             FILENAME = str(gfiltered).split('<')[-3].split('>')[1]
         except IndexError:
             print("Drive link is blocked")
