@@ -7,6 +7,15 @@ mediafireLinks = []
 androidfilehostLinks = []
 other = []
 
+def otherDL(vendor):
+    # Probably just Android Data Host
+    for dl in other:
+        opage = requests.get(dl)
+        osoup = BeautifulSoup(opage.content, "html.parser")
+        oresults = osoup.find(class_="download2")
+        olink = str(oresults).split('"')[3]
+        os.system('%s %s "%s"' % ('wget -P', vendor, olink))
+
 def googleDL(vendor):
     # Mostly stable but there are times that for whatever reason the file does not redirect and wget ends up downloading the html web-page instead of the zip file
     # Would want to look into it to increase stability, but seems to be good for now
@@ -46,13 +55,15 @@ def mediafireDL(vendor):
         os.system('%s %s "%s"' % ('wget -P', vendor, dlink))
 
 def download(vendor):
-    if len(mediafireLinks) != 0:
-        mediafireDL(vendor)
-    if len(googleLinks) != 0:
-        googleDL(vendor)
-    if len(androidfilehostLinks) != 0:
+    #if len(mediafireLinks) != 0:
+    #    mediafireDL(vendor)
+    #if len(googleLinks) != 0:
+    #    googleDL(vendor)
+    #if len(androidfilehostLinks) != 0:
     #    afhDL()
-        print("No support for AndroidFileHost yet")
+    #    print("No support for AndroidFileHost yet")
+    if len(other) != 0:
+        otherDL(vendor)
 
 def cleanupLists():
     googleLinks.clear()
@@ -149,6 +160,8 @@ def getFinalLinks(filteredLinks):
                     elif "androidfilehost.com" in site:
                         #print("AndroidFileHost Link:" , site)
                         androidfilehostLinks.append(site)
+                    elif "androiddatahost.com" in site:
+                        other.append(site)
                     else:
                         print("Uh Oh, no support for this yet")
                         print(str(c))
@@ -241,10 +254,9 @@ Scrapes all the links for a desired vendor
 It gets both the mirror links and tries both, you can remove duplicates with Linux commands
 Reasoning is the Google drive links are scraped often so they can return errors
 Works and handles everything you can see so far on firmwarefile but measures in place in case new issue arises
-Does not handle downloads yet
+Downloads MediaFire, GoogleDrive, and AndroidDataHost
+*OTA and duplicates should be removed with bash commands since it's quick and easy
 
 TODOs:
-x Still need to handle https://androiddatahost.com/cyhum
-x Start seeing how downloads work
-x Try implementing solution for Android File Host since there are a lot
+x Get Android File Host working
 """

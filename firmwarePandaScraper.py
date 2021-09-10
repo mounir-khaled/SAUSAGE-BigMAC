@@ -258,10 +258,8 @@ It will specifically look for links to images that are greater than Android 7.x.
 It currently is capable of downloading MediaFire and GoogleDrive links
 It can also infer the Android OS Version based off the file name if the OS Version is not provided
 Preliminary tests conducted verifying all necessary URLs are extracted and downloads are successful
+*OTA and duplicates should be removed with bash commands since it's quick and easy
 
 TODOs:
 x Get Android File Host working
-x Remove OTA (I think should just be done later)
-x Leave running on Frank
-x Start trying to get it to work on FirmwareFile.com
 """
