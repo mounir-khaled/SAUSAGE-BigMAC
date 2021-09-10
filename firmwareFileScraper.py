@@ -1,13 +1,15 @@
-import requests, os, time
+import requests, os, time, subprocess
 from bs4 import BeautifulSoup
 
 # Global Lists
 googleLinks = []
 mediafireLinks = []
 androidfilehostLinks = []
+sharepointLinks = []
+adhLinks = []
 other = []
 
-def otherDL(vendor):
+def adhDL(vendor):
     # Probably just Android Data Host
     for dl in other:
         opage = requests.get(dl)
@@ -15,6 +17,21 @@ def otherDL(vendor):
         oresults = osoup.find(class_="download2")
         olink = str(oresults).split('"')[3]
         os.system('%s %s "%s"' % ('wget -P', vendor, olink))
+
+def sharepointDL(vendor):
+    for sp in sharepointLinks:
+        # SharePoint forbids downloads, need some workaround
+        #proc = subprocess.Popen(["curl -Ls -o /dev/null -w %{url_effective}", sp], stdout=subprocess.PIPE, shell=True)
+        #(out, err) = proc.communicate()
+        term = "curl -Ls -o /dev/null -w %{url_effective} " + sp
+        out = os.popen(term).read()
+        termOut = str(out)
+        #print(termOut)
+        #termOut = os.system("%s %s" % ("curl -Ls -o /dev/null -w %{url_effective}", sp))
+        lnk = termOut.split("onedrive.aspx?id=")
+        sdownload = lnk[0]+"download.aspx?SourceUrl="+lnk[1]
+        print(sp)
+        os.system('%s %s "%s"' % ('wget -P', vendor, sdownload))
 
 def googleDL(vendor):
     # Mostly stable but there are times that for whatever reason the file does not redirect and wget ends up downloading the html web-page instead of the zip file
@@ -55,20 +72,26 @@ def mediafireDL(vendor):
         os.system('%s %s "%s"' % ('wget -P', vendor, dlink))
 
 def download(vendor):
-    #if len(mediafireLinks) != 0:
-    #    mediafireDL(vendor)
-    #if len(googleLinks) != 0:
-    #    googleDL(vendor)
-    #if len(androidfilehostLinks) != 0:
-    #    afhDL()
-    #    print("No support for AndroidFileHost yet")
+    if len(mediafireLinks) != 0:
+        mediafireDL(vendor)
+    if len(googleLinks) != 0:
+        googleDL(vendor)
+    if len(androidfilehostLinks) != 0:
+        #afhDL()
+        print("No support for AndroidFileHost yet")
+    if len(sharepointLinks) != 0:
+        sharepointDL(vendor)
+    if len(adhLinks) != 0:
+        adhDL(vendor)
     if len(other) != 0:
-        otherDL(vendor)
+        other(vendor)
 
 def cleanupLists():
     googleLinks.clear()
     mediafireLinks.clear()
     androidfilehostLinks.clear()
+    sharepointLinks.clear()
+    adhLinks.clear()
     other.clear()
 
 def printLists():
@@ -78,6 +101,10 @@ def printLists():
     print(googleLinks)
     print("---AndroidFileHost---")
     print(androidfilehostLinks)
+    print("---SharePoint---")
+    print(sharepointLinks)
+    print("---AndroidDataHost---")
+    print(adhLinks)
     print("---Other---")
     print(other)
 
@@ -94,6 +121,8 @@ def versionExtractor(fileName):
     
     # Finds for part of filename that goes x.x.x
     for part in findNum:
+        # Kind of flaw since it looks at the first instance
+        # and not each instance of a x.x.x number but it works for now
         if '.' in str(part) and part[0].isnumeric():
             findLargestVersion = False
             finalVersion = part
@@ -149,6 +178,16 @@ def getFinalLinks(filteredLinks):
                     googleLinks.append(str(c).split('"')[3])
                     googleLinks.append(str(c).split('"')[11])
                     get = False
+                elif "Mirror 1 (OneDrive)" in str(c) and "Mirror 2 (GDrive)" in str(c):
+                    # <p><a class="zip-one" href="https://firmwarefile-my.sharepoint.com/:u:/p/support/ERE6FHV2gV1Eh886RpBHphUBFliJ8a-_6RI9ifPOYPQZtg?e=oviYSI" rel="noopener noreferrer" target="_blank">Mirror 1 (OneDrive)</a><a class="zip-two" href="https://drive.google.com/file/d/1RCD-wB1v1QU3OcJM5xz5Be7hu_-g3XyI/view" rel="noopener noreferrer" target="_blank">Mirror 2 (GDrive)</a></p>
+                    sharepointLinks.append(str(c).split('"')[3])
+                    googleLinks.append(str(c).split('"')[11])
+                    get = False
+                elif "Mirror 1 (Mediafire)" in str(c) and "Mirror 2 (AFH)" in str(c):
+                    # <p><a class="zip-one" href="https://www.mediafire.com/file/jv2zxoot3xlp5jz/Xiaomi_Redmi_Note_5_Pro_8.7.12_20180712.0000.00_Global_8.1_XFT.zip/file" rel="noopener noreferrer" target="_blank">Mirror 1 (Mediafire)</a><a class="zip-two" href="https://androidfilehost.com/?fid=14943124697586377114" rel="noopener noreferrer" target="_blank">Mirror 2 (AFH)</a></p>
+                    mediafireLinks.append(str(c).split('"')[3])
+                    androidfilehostLinks.append(str(c).split('"')[11])
+                    get = False
                 elif "gappug" in str(c):
                     site = str(c).split('"')[3]
                     if "mediafire.com" in site:
@@ -161,13 +200,13 @@ def getFinalLinks(filteredLinks):
                         #print("AndroidFileHost Link:" , site)
                         androidfilehostLinks.append(site)
                     elif "androiddatahost.com" in site:
-                        other.append(site)
+                        adhLinks.append(site)
                     else:
-                        print("Uh Oh, no support for this yet")
+                        print("Uh Oh, no support for this yet, gappug")
                         print(str(c))
                     get = False
                 else:
-                    print("Uh Oh, no support for this yet")
+                    print("Uh Oh, no support for this yet, Two Mirros")
                     print(str(c))
                     get = False
 
@@ -254,7 +293,7 @@ Scrapes all the links for a desired vendor
 It gets both the mirror links and tries both, you can remove duplicates with Linux commands
 Reasoning is the Google drive links are scraped often so they can return errors
 Works and handles everything you can see so far on firmwarefile but measures in place in case new issue arises
-Downloads MediaFire, GoogleDrive, and AndroidDataHost
+Downloads MediaFire, GoogleDrive, SharePoint, and AndroidDataHost
 *OTA and duplicates should be removed with bash commands since it's quick and easy
 
 TODOs:
