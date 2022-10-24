@@ -87,7 +87,7 @@ It requires the use of mount/unmount and reading of root-owned files in mounted 
             job_id = "0"
 
         aspe = ASPExtractor(args.vendor, firmware_name, job_id=job_id)
-        asp = aspe.extract_from_firmware(args.firmware_image, skip_extract=False)
+        asp = aspe.extract_from_firmware(args.firmware_image, skip_extract=True)#False)
 
         log.info("Saving extracted information")
 

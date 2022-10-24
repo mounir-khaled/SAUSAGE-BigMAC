@@ -1,0 +1,7 @@
+rules:
+        - id: testt
+          patterns:
+                  - pattern: $RETURNTYPE $METHOD(...) { ... }
+          message: "We have a Binder"
+          languages: [java]
+          severity: WARNING

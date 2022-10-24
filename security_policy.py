@@ -9,7 +9,8 @@ import glob
 import pickle
 import copy
 from fnmatch import fnmatch
-from subprocess import Popen
+from subprocess import Popen, PIPE
+import re
 
 from config import *
 from android.property import AndroidPropertyList
@@ -179,7 +180,7 @@ class FilesystemPolicy:
                     total_path = tpath
             else:
                 total_path = tpath
-                break
+                # break
 
         return total_path
 
@@ -195,8 +196,11 @@ class FilesystemPolicy:
             (fn, fo), = f.items()
 
             size = str(fo["size"])
-            user = AID_MAP[fo["user"]]
-            group = AID_MAP[fo["group"]]
+            # user = AID_MAP[fo["user"]]
+            # group = AID_MAP[fo["group"]]
+            user = AID_MAP.get(fo["user"], "UID=%d" % fo["user"])
+            group = AID_MAP.get(fo["group"], "GID=%d" % fo["group"])
+            
             secontext = str(fo["selinux"])
 
 
@@ -362,13 +366,29 @@ class ASPExtractor:
         self.saved_files = {}
         self.job_id = job_id
 
-    def save_file(self, source, path, overwrite=False):
+    def fix_symlink(self, path):
+        if not os.path.islink(path):
+            return path
+
+        links_to = os.readlink(path)
+        if links_to.startswith("/vendor"):
+            fw_name = self.asp.firmware_name
+            extract_dir = path[:path.find(fw_name) + len(fw_name)]
+            path = os.path.join(extract_dir, "vendor.img", links_to[len("/vendor")+1:])
+
+        return path
+
+    def save_file(self, source, path, overwrite=False, copy_symlink=False):
         save_path = os.path.join(self.results_directory, path)
         mkdir_recursive(os.path.dirname(save_path))
 
         if os.path.isfile(save_path) and not overwrite:
             log.warning("Not overwriting saved file '%s': existing file found", path)
             return
+
+        # print(source)
+        if copy_symlink and os.path.islink(source):
+            source = self.fix_symlink(source)
 
         shutil.copyfile(source, save_path)
         self.saved_files[path] = {"save_path": save_path}
@@ -407,7 +427,7 @@ class ASPExtractor:
                     continue
             elif len(match) > 1:
                 log.error("More than one %s filesystem found. Cannot disambiguate", fs["name"])
-                sys.exit(1)
+                # sys.exit(1)
 
             # only one match supported
             match = match[0]
@@ -476,16 +496,21 @@ class ASPExtractor:
                     continue
 
                 file_name = os.path.basename(p["original_path"])
-                self.save_file(p["original_path"], file_name)
-
                 log.info("Saving SELinux policy file '%s' from '%s'",
                          filebase, combined_fs.fsname)
+                self.save_file(p["original_path"], file_name, copy_symlink=True)
+                
 
         # TODO: double check that we found a complete SEAndroid policy
 
         # extract out properties from the filesystems
         self._extract_properties(combined_fs)
         self._extract_init(combined_fs)
+        # extract service binaries and their external dependencies
+        deps = self._extract_binaries(combined_fs)
+        # extract all external dependencies
+        self._extract_shared_objects(combined_fs, deps)
+        
 
         if "file_contexts.bin" in self.saved_files:
             log.info("Converting found file_contexts.bin to file_contexts")
@@ -508,7 +533,7 @@ class ASPExtractor:
         return self.asp
 
     def _firmware_extract_task(self, filepath, skip=False):
-        job_result_dir = os.path.join(os.environ['HOME'], 'atsh_tmp' + self.job_id)
+        job_result_dir = os.path.join(filepath) #os.path.join(os.environ['HOME'], 'atsh_tmp' + self.job_id)
 
         # Mounted file systems: /home/atsh_tmp0/mnt*
         # Extracted file systems: ./extract/VENDOR/BASENAME/
@@ -530,12 +555,12 @@ class ASPExtractor:
             p = Popen([AT_EXTRACT_PATH, filepath, vendor_name, self.job_id, '1', '0'])
             p.communicate()
             # TODO: check for error
+        
+        #if not os.path.isdir(job_result_dir):
+        #    log.error("No filesystem result directory found. Possible extraction error")
+        #    return []
 
-        if not os.path.isdir(job_result_dir):
-            log.error("No filesystem result directory found. Possible extraction error")
-            return []
-
-        fs_prefix = "mnt_"
+        fs_prefix = ""#"mnt_"
         mounted_filesystems = glob.glob(os.path.join(job_result_dir, fs_prefix + '*'))
         extracted_filesystems = list(directories(os.path.join(firmware_extracted_path)))
 
@@ -576,7 +601,7 @@ class ASPExtractor:
             props.from_file(v["original_path"])
 
             log.debug("Saving .prop file '%s'", k)
-            self.save_file(v["original_path"], os.path.join("prop", k[1:]))
+            self.save_file(v["original_path"], os.path.join("prop", k[1:]), copy_symlink=True)
 
         # If we can't find this, we're in trouble
         if 'ro.build.version.release' not in props:
@@ -596,7 +621,7 @@ class ASPExtractor:
             (rc, v), = rc_dict.items()
 
             log.debug("Saving init.rc file '%s'", rc)
-            self.save_file(v["original_path"], os.path.join("init", rc[1:]))
+            self.save_file(v["original_path"], os.path.join("init", rc[1:]), copy_symlink=True)
 
         fstab_files = policy.find("*fstab*")
 
@@ -606,7 +631,114 @@ class ASPExtractor:
             (rc, v), = rc_dict.items()
 
             log.debug("Saving fstab: '%s'", rc)
-            self.save_file(v["original_path"], os.path.join("init", rc[1:]))
+            self.save_file(v["original_path"], os.path.join("init", rc[1:]), copy_symlink=True)
+
+    def _extract_shared_objects(self, policy, deps):
+        for dep in deps:
+            try:
+                so_files = policy.find(dep)
+            except KeyError:
+                log.error("Failed to find dependency: %s", dep)
+
+            for so_dict in so_files:
+                (so, v), = so_dict.items()
+                log.debug("Saving shared object '%s'", so)
+                try:
+                    self.save_file(v["original_path"], os.path.join("daemons", so[1:]), copy_symlink=True)
+                except FileNotFoundError as e:
+                    log.error(e)
+
+    def _extract_binaries(self, policy):
+        rc_files = policy.find("*.rc")
+        binaries = set()
+        dependencies = set()
+        for rc_dict in rc_files:
+            path_on_fs, original_path = next((path_on_fs, details["original_path"]) for path_on_fs, details in rc_dict.items())
+            binaries.update(self._find_daemons_from_rc(original_path))
+
+        log.info("Found %d daemon binaries" % len(binaries))
+        for b_path in binaries:
+            if not b_path.strip():
+                continue
+
+            original_path = ""
+            try:
+                original_path = policy.files[b_path]["original_path"]
+            except KeyError as e:
+                b_name = os.path.basename(b_path)
+                log.warning("Could not find '%s' in policy.files, searching by '%s'", b_path, b_name)
+                
+                matches = policy.find("*%s" % b_name)
+                file_matches = []
+                for m in matches:
+                    path_on_fs, details = next(iter(m.items()))
+                    orig_path = details["original_path"]
+                    if details["link_path"] == "" and os.path.isfile(orig_path):
+                        file_matches.append((path_on_fs, orig_path))
+
+                if not file_matches:
+                    log.error("Binary file '%s' not found", b_path)
+                    continue
+
+                b_path, original_path = file_matches[0]
+
+            save_path = os.path.join("daemons", b_path[1:])
+            log.debug("Saving daemon binary: '%s'" % os.path.basename(b_path))
+            try:
+                self.save_file(original_path, save_path, copy_symlink=True)
+            except FileNotFoundError as e:
+                log.error("Could not save %s: %s" % (b_path, e))
+                continue
+
+            dependencies.update(self._find_dependencies(policy, b_path))
+
+        log.info("Found %d daemon dependencies", len(dependencies))
+        return dependencies
+
+    def _find_dependencies(self, policy, bin_path):
+        deps = set()
+
+        dep_queue = [bin_path]
+        while dep_queue:
+            dep = dep_queue.pop()
+            for so_name in self._find_so_names(policy, bin_path):
+                so_files = policy.find("**/%s" % so_name)
+                for so_dict in so_files:
+                    path_on_fs = next(iter(so_dict.keys()))
+                    if not path_on_fs in deps:
+                        deps.add(path_on_fs)
+                        dep_queue.insert(0, path_on_fs)
+
+        return deps
+
+    def _find_so_names(self, policy, bin_path):
+        real_path = policy.files[bin_path]["original_path"]
+        real_path = self.fix_symlink(real_path)
+
+        so_pattern = re.compile(r"\[(?P<so>.+)\]")
+        p = Popen(["readelf", "-d", real_path], stdout=PIPE, universal_newlines=True)
+        for line in p.stdout:
+            if "Shared library" in line:
+                m = so_pattern.search(line)
+                if not m:
+                    log.error("readelf: %s", line)
+                    continue
+
+                so_name = m.group("so")
+                yield so_name
+
+    def _find_daemons_from_rc(self, rc_filepath):
+        daemons = []
+        with open(rc_filepath, 'r') as rc:
+            for line in rc:
+                line = line.strip()
+                if not line.startswith("service"):
+                    continue
+
+                daemons.append(line.split(" ")[2])
+
+        return daemons
+
 
     def _walk_filesystem(self, fs_name, fs_type, toplevel_path):
         def handle_error(exp):

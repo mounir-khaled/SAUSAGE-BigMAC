@@ -59,6 +59,7 @@ class Prolog(object):
                 {'name' : 'query', 'handler': self.query},
                 {'name' : 'query_mac', 'handler': self.query_mac_only},
                 {'name' : 'print', 'handler': self.print_paths},
+                {'name' : 'print_ipc', 'handler': self.print_ipc_paths},
                 {'name' : 'print_trust', 'handler': self.print_trust_paths},
                 {'name' : 'print_special', 'handler' : self.print_special},
                 {'name' : 'print_trusted', 'handler' : self.print_trusted},
@@ -69,31 +70,119 @@ class Prolog(object):
                 {'name' : 'list_saved', 'handler': self.list_saved},
                 {'name' : 'load', 'handler': self.load},
                 {'name' : 'debug', 'handler': self.debug},
+                {'name' : 'save_print', 'handler': self.save_txt},
+                {'name' : 'query_attack_surface', 'handler': self.query_attack_surface}
         ]
+
+    def query_attack_surface(self, args):
+        target = args[0]
+
+        self.result = []
+        self.query(["_", target, "1"])
+        result_1 = self.result.copy()
+
+        self.result = []
+        self.query(["_", target, "2"])
+        result_2 = self.result.copy()
+
+        diff_result = self._diff(result_1, result_2, "right", return_rendered=False)
+        self.result = diff_result
+
+        uniq_procs = set()
+        uniq_ipc = set()
+        uniq_types = set()
+        uniq_files = set()
+        uniq_obj = set()
+
+        for path in diff_result:
+            writeable_obj_id = path[1]
+            writing_obj_id = path[0]
+
+            uniq_obj.add(writeable_obj_id)
+
+            try:
+                writeable_obj = self.node_objs[self.node_id_map_inv[writeable_obj_id]]
+
+                uniq_types.add(writeable_obj.sid.type)
+
+                if isinstance(writeable_obj, overlay.IPCNode):
+                    uniq_ipc.add(writeable_obj_id)
+                elif isinstance(writeable_obj, overlay.FileNode):
+                    uniq_files.add(writeable_obj_id)
+
+            except KeyError as e:
+                log.error("Could not find writeable object %s" % e)
+
+
+            try:
+                writing_obj = self.node_objs[self.node_id_map_inv[writing_obj_id]]
+                if isinstance(writing_obj, overlay.ProcessNode): 
+                    uniq_procs.add(writing_obj_id)
+
+            except KeyError as e:
+                log.error("could not find writing object %s" % e)
+
+
+        result = {"ntype": len(uniq_types),
+                    "nobj": len(uniq_obj),
+                    "ipc": len(uniq_ipc),
+                    "file": len(uniq_files),
+                    "procs": len(uniq_procs),
+                }
+
+        result_str = " ".join("%s=%-5d " % (k, v) for k, v in result.items())
+        print("Got %d writeable paths: %s" % (len(diff_result), result_str))
+
 
     def print_strongest(self, args):
         results = {}
         count = 0
+
+        sort_key = 1 # sort by nobj by default 
+        if args:
+            obj_type_str = args[0].lower().strip()
+
+            OBJ_TYPE_IX = {"type": 0, "obj": 1, "ipc": 2, "file": 3, "type_strength": 4}
+            if obj_type_str not in OBJ_TYPE_IX:
+                log.error("Invalid strength sort key '%s' Valid options are %s" % (obj_type_str, list(OBJ_TYPE_IX.keys())))
+                return
+
+            sort_key = OBJ_TYPE_IX[obj_type_str]
+
+        type_freq = {}
+        # frequency of occurence of an object type
+        # might be interesting to use this as an indicator of strength
+        # then sort objects by the combined strength of the types it has access to
+        # intuitively types with less objects that can access them are stronger...
+        intermediate_results = {}
         for pn, p in self.inst.processes.items():
             name = p.get_node_name()
             self.result = []
+            log.setLevel(logging.WARNING)
             self.query([name, "_", "1"])
+            log.setLevel(logging.INFO)
 
             if len(self.result) > 0:
-                uniq_types = {}
-                obj_types = {"ipc": 0, "file": 0}
+                uniq_types = set()
+                obj_types = {"ipc": [], "file": []}
 
                 for path in self.result:
                     target = path[1]
                     obj = self.node_objs[self.node_id_map_inv[target]]
-                    uniq_types[obj.sid.type] = 1
+                    if obj.sid.type not in uniq_types:
+                        uniq_types.add(obj.sid.type)
+                        
+                        type_freq[obj.sid.type] = type_freq.get(obj.sid.type, 0)
+                        if not (isinstance(obj, overlay.IPCNode) and obj.owner == p):
+                            type_freq[obj.sid.type] += 1
 
                     if isinstance(obj, overlay.IPCNode):
-                        obj_types["ipc"] += 1
-                    elif isinstance(obj, overlay.FileNode):
-                        obj_types["file"] += 1
+                        obj_types["ipc"].append(obj)
 
-                results[name] = [len(uniq_types), len(self.result), obj_types["ipc"],
+                    elif isinstance(obj, overlay.FileNode):
+                        obj_types["file"].append(obj)
+
+                intermediate_results[name] = [uniq_types, len(self.result), obj_types["ipc"],
                         obj_types["file"]]
 
             count += 1
@@ -101,11 +190,20 @@ class Prolog(object):
             if count % 10 == 0:
                 print("Progress %d/%d" % (count, len(self.inst.processes)))
 
-        results = sorted(list(results.items()), key=lambda x: x[1][1], reverse=True)
+        for node_name, res in intermediate_results.items():
+            uniq_types = res[0]
+            n_uniq_type = len(uniq_types)
+            n_obj = res[1]
+            n_ipc = len(res[2])
+            n_file = len(res[3])
+            type_strength = sum(1 / type_freq[t] for t in uniq_types if type_freq[t] != 0)
 
+            results[node_name] = [n_uniq_type, n_obj, n_ipc, n_file, type_strength]
+        
+        results = sorted(list(results.items()), key=lambda x: (x[1][sort_key], x[1][1]), reverse=True)
         for i, res in enumerate(results):
-            print("%3d: ntype=%-5d nobj=%-5d ipc=%-5d file=%-5d %s" % (i+1,
-                res[1][0], res[1][1], res[1][2], res[1][3], res[0]))
+            print("%3d: ntype=%-5d nobj=%-5d ipc=%-5d file=%-5d str=%-5.2f %s" % (i+1,
+                res[1][0], res[1][1], res[1][2], res[1][3], res[1][4], res[0]))
 
     def load_node_map(self):
         with open(self.inst_map_path, 'rb') as fp:
@@ -234,6 +332,41 @@ class Prolog(object):
                 print(self.inst.filesystem.list_path(fn))
                 pprint.pprint(fo)
 
+    def print_ipc_paths(self, args):
+        if not self.result:
+            return
+
+        cutoff = None
+        if len(args) > 0:
+            try:
+                cutoff = int(args[0])
+            except ValueError:
+                return
+
+        tmp_result = self.result.copy()
+
+        # filter ipc paths
+
+        self.result = []
+        for path in tmp_result:
+            is_thru_ipc = False
+            for component in path:
+
+                if component in self.node_id_map_inv:
+                    name = self.node_id_map_inv[component]
+                    obj = self.node_objs[name]
+                else:
+                    continue
+
+                if isinstance(obj, overlay.IPCNode):
+                    is_thru_ipc = True
+                    break
+
+            if is_thru_ipc: self.result.append(path)
+
+        self._pretty_print_results(cutoff=cutoff)
+        self.result = tmp_result
+
     def print_paths(self, args):
         if not self.result:
             return
@@ -245,23 +378,29 @@ class Prolog(object):
             except ValueError:
                 return
 
-        for pathid, path in enumerate(sorted(self.result)):
-            if cutoff is not None and (pathid+1 > cutoff):
-                break
+        self._pretty_print_results(cutoff=cutoff)
+        # for pathid, path in enumerate(sorted(self.result)):
+        #     if cutoff is not None and (pathid+1 > cutoff):
+        #         break
 
-            pretty_path = self._render_path(path)
-            print("%d: %s" % (pathid+1, pretty_path))
+        #     pretty_path = self._render_path(path)
+        #     print("%d: %s" % (pathid+1, pretty_path))
 
     def _render_path(self, path, colorized=False):
         renamed = []
 
         for component in path:
-            name = self.node_id_map_inv[component]
-            obj = self.node_objs[name]
+            if component in self.node_id_map_inv:
+                name = self.node_id_map_inv[component]
+                obj = self.node_objs[name]
+            else:
+                log.error("Could not find component %s in node_id_map" % component)
+                name = component
+                obj = None
 
             if colorized:
                 # TODO: make the coloring be controlled by a lambda
-                if obj.trusted:
+                if obj and obj.trusted:
                     renamed += ["\x1b[32m%s (T)\x1b[0m" % name]
                 else:
                     renamed += ["\x1b[31m%s (U)\x1b[0m" % name]
@@ -281,12 +420,13 @@ class Prolog(object):
             except ValueError:
                 return
 
-        for pathid, path in enumerate(sorted(self.result)):
-            if cutoff is not None and (pathid+1 > cutoff):
-                break
+        self._pretty_print_results(cutoff=cutoff, colorized=True)
+        # for pathid, path in enumerate(sorted(self.result)):
+        #     if cutoff is not None and (pathid+1 > cutoff):
+        #         break
 
-            pretty_path = self._render_path(path, colorized=True)
-            print("%d: %s" % (pathid+1, pretty_path))
+        #     pretty_path = self._render_path(path, colorized=True)
+        #     print("%d: %s" % (pathid+1, pretty_path))
 
     def sort_special_files(self):
         if not self.special_files:
@@ -333,8 +473,74 @@ class Prolog(object):
         except IOError as e:
             log.error("Failed to save file: %s", e)
 
+    def save_txt(self, args):
+        if len(args) < 1:
+            log.error("Save needs filename")
+            return
+        
+        cutoff = None
+        if len(args) >= 2:
+            try:
+                cutoff = int(args[1])
+            except ValueError:
+                log.error("cutoff argument must be an integer")
+                return
+
+        if not self.result:
+            log.error("No results to save")
+            return
+
+        try:
+            os.mkdir(self.saved_queries_path)
+        except IOError:
+            pass
+            
+        save_path = os.path.join(self.saved_queries_path, args[0])
+        try:
+            with open(save_path, 'w') as fp:
+                n = self._pretty_print_results(cutoff=cutoff, file=fp)
+
+            log.info("Saved %d results to %s", n, save_path)
+        except IOError as e:
+            log.error("Failed to save file: %s", e)
+
+    def _pretty_print_results(self, cutoff=None, colorized=False, file=sys.stdout):
+        n_lines_printed = 0
+        for pathid, path in enumerate(sorted(self.result)):
+            if cutoff is not None and (pathid+1 > cutoff):
+                break
+
+            pretty_path = self._render_path(path, colorized=colorized)
+            print("%d: %s" % (pathid+1, pretty_path), file=file)
+            n_lines_printed += 1
+
+        return n_lines_printed
+
+    def _diff(self, diff_a_paths, diff_b_paths, filter_param, return_rendered=True):
+        from difflib import Differ
+
+        result = []
+
+        d = Differ()
+
+        diff_a_paths = dict([((self._render_path(x) + "\n"), x) for x in diff_a_paths])
+        diff_b_paths = dict([((self._render_path(x) + "\n"), x) for x in diff_b_paths])
+
+        result = d.compare(list(diff_a_paths.keys()), list(diff_b_paths.keys()))
+
+        if filter_param == "left":
+            result = list(filter(lambda x: x.startswith('- '), result))
+        elif filter_param == "right":
+            result = list(filter(lambda x: x.startswith('+ '), result))
+        elif filter_param == "both":
+            result = list(filter(lambda x: x.startswith('  '), result))
+
+        if not return_rendered:
+            result = [diff_a_paths.get(r[2:], diff_b_paths[r[2:]]) for r in result]
+
+        return result
+
     def diff(self, args):
-        import difflib
 
         filter_param = ""
 
@@ -360,20 +566,8 @@ class Prolog(object):
             print("Left or right result has no paths")
             return
 
-        d = difflib.Differ()
-
-        diff_a_paths = [(self._render_path(x) + "\n") for x in diff_a_paths]
-        diff_b_paths = [(self._render_path(x) + "\n") for x in diff_b_paths]
-
         print("Diffing %s (%d) -> %s (%d) paths..." % (diff_a, len(diff_a_paths), diff_b, len(diff_b_paths)))
-        result = d.compare(diff_a_paths, diff_b_paths)
-
-        if filter_param == "left":
-            result = list(filter(lambda x: x.startswith('- '), result))
-        elif filter_param == "right":
-            result = list(filter(lambda x: x.startswith('+ '), result))
-        elif filter_param == "both":
-            result = list(filter(lambda x: x.startswith('  '), result))
+        result = self._diff(diff_a_paths, diff_b_paths, filter_param)
 
         for i, line in enumerate(result):
             sys.stdout.write("%d: %s" % (i+1, line))

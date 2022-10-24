@@ -1,0 +1,4 @@
+Run this command first to extract all the methods we want and save it to out.txt:
+    semgrep -f test.yml /directory/of/file/to/analyze.java --max-lines-per-finding 50 &> out.txt
+
+Then run the tickyticky.py script. Documentation found in script
